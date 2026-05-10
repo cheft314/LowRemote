@@ -10,6 +10,7 @@ enum ControlEvent {
     case mouseMove(dx: Double, dy: Double)           // M:dx,dy
     case mouseAbsolute(normX: Float, normY: Float)   // MA:nx,ny
     case mouseClick(MouseButton)                     // MC:L/R
+    case mouseDoubleClick(MouseButton)               // MDC:L/R
     case mouseDown(MouseButton)                      // MD:L/R
     case mouseUp(MouseButton)                        // MU:L/R
     case mouseWheel(Int)                             // MW:dy
@@ -55,6 +56,7 @@ enum ControlEvent {
             return .mouseAbsolute(normX: nx, normY: ny)
 
         case "MC": return btn(args).map { .mouseClick($0) }
+        case "MDC": return btn(args).map { .mouseDoubleClick($0) }
         case "MD": return btn(args).map { .mouseDown($0) }
         case "MU": return btn(args).map { .mouseUp($0) }
         case "MW": return Int(args).map { .mouseWheel($0) }

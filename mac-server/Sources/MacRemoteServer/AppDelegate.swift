@@ -16,13 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenCapture: ScreenCaptureManager!
     private var encoder: VideoEncoder!
     private var inputSimulator: InputSimulator!
+    private var audioCapture: AudioCaptureManager!   // Mac → Android
 
     private var clientEndpoint: (host: String, port: UInt16)?
     private var currentFPS: Int = 60
     private var frameIdCounter: UInt32 = 0
     /// Index of the display currently being streamed. 0 = main display.
     private var currentDisplayIndex: Int = 0
-    private var audioReceiver: AudioReceiver?
+    private var audioReceiver: AudioReceiver?        // Android mic → Mac speaker
 
     // MARK: - Lifecycle
 
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopStreaming()
+        audioCapture?.stop()
         audioReceiver?.stop()
         tcpServer?.stop()
         udpServer?.stop()
@@ -229,6 +231,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             height = 1080
         }
 
+        // Keep InputSimulator in sync with which display is being streamed
+        inputSimulator.activeDisplayID = displayID
+
         let bitrate: Int
         switch fps {
         case 30: bitrate = 8_000_000
@@ -253,14 +258,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         screenCapture.start(fps: fps, displayID: displayID)
 
-        NSLog("[LowRemote] Streaming started at \(fps) fps (\(width)x\(height)) display[\(idx)]")
+        // Start Mac-system-audio → Android capture (type 0x04)
+        audioCapture = AudioCaptureManager()
+        audioCapture.onAudioBuffer = { [weak self] pcmData in
+            self?.sendSystemAudio(pcmData)
+        }
+        audioCapture.start()
+
+        NSLog("[LowRemote] Streaming started at \(fps) fps (\(width)x\(height)) display[\(idx)] id=\(displayID)")
     }
 
     private func stopStreaming() {
-        screenCapture?.stop()
-        screenCapture = nil
-        encoder?.stop()
-        encoder = nil
+        screenCapture?.stop(); screenCapture = nil
+        encoder?.stop();       encoder = nil
+        audioCapture?.stop();  audioCapture = nil
     }
 
     private func sendEncodedFrame(_ nalData: Data, isKeyframe: Bool) {
@@ -283,6 +294,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 payload: chunk
             )
             udpServer.send(packet, to: endpoint.host, port: endpoint.port)
+        }
+    }
+
+    private func sendSystemAudio(_ pcmData: Data) {
+        guard let endpoint = clientEndpoint else { return }
+        // Float32 48kHz stereo: 1024 frames = 8192 bytes — fits in one MTU-safe packet.
+        // Chunk if somehow larger.
+        let maxP = Packet.maxPayloadSize
+        var offset = 0
+        while offset < pcmData.count {
+            let end    = min(offset + maxP, pcmData.count)
+            let chunk  = pcmData.subdata(in: offset..<end)
+            let packet = Packet.encodeSystemAudio(frameId: nextFrameId(), payload: chunk)
+            udpServer.send(packet, to: endpoint.host, port: endpoint.port)
+            offset = end
         }
     }
 

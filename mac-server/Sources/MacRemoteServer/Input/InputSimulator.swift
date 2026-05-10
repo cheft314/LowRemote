@@ -19,6 +19,10 @@ final class InputSimulator {
         return CGPoint(x: loc.x, y: h - loc.y)
     }
 
+    /// Display ID currently being streamed — set by AppDelegate when stream starts
+    /// or the user switches screens.  Used to clamp touch/touchpad moves correctly.
+    var activeDisplayID: CGDirectDisplayID = CGMainDisplayID()
+
     func handleEvent(_ event: ControlEvent) {
         assert(Thread.isMainThread,
                "InputSimulator must be called on the main thread")
@@ -32,6 +36,9 @@ final class InputSimulator {
 
         case .mouseClick(let btn):
             clickMouse(button: btn)
+
+        case .mouseDoubleClick(let btn):
+            doubleClickMouse(button: btn)
 
         case .mouseDown(let btn):
             setMouseButton(button: btn, down: true)
@@ -93,20 +100,14 @@ final class InputSimulator {
     // MARK: - Mouse helpers
 
     private func clampToScreen(_ p: CGPoint) -> CGPoint {
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return p }
-        // Build bounding rect in CG coordinates (top-origin)
-        var minX = CGFloat.infinity, maxX = -CGFloat.infinity
-        var minY = CGFloat.infinity, maxY = -CGFloat.infinity
-        for s in screens {
-            let h = NSScreen.main?.frame.height ?? s.frame.height
-            let cgRect = CGRect(x: s.frame.minX, y: h - s.frame.maxY,
-                                width: s.frame.width, height: s.frame.height)
-            minX = min(minX, cgRect.minX); maxX = max(maxX, cgRect.maxX)
-            minY = min(minY, cgRect.minY); maxY = max(maxY, cgRect.maxY)
-        }
-        return CGPoint(x: max(minX, min(p.x, maxX - 1)),
-                       y: max(minY, min(p.y, maxY - 1)))
+        // Clamp to the bounds of the currently-streamed display so that
+        // touch/touchpad events from the phone land on the correct screen.
+        let bounds = CGDisplayBounds(activeDisplayID)
+        guard !bounds.isNull, !bounds.isInfinite else { return p }
+        return CGPoint(
+            x: max(bounds.minX, min(p.x, bounds.maxX - 1)),
+            y: max(bounds.minY, min(p.y, bounds.maxY - 1))
+        )
     }
 
     private func moveMouse(dx: Double, dy: Double) {
@@ -122,12 +123,13 @@ final class InputSimulator {
     }
 
     private func moveMouseAbsolute(normX: Float, normY: Float) {
-        guard let screen = NSScreen.main else { return }
-        let scrW = screen.frame.width
-        let scrH = screen.frame.height
-        // normX/Y are 0…1 mapping to Mac's full screen in CG coords
-        let pt = clampToScreen(CGPoint(x: CGFloat(normX) * scrW,
-                                       y: CGFloat(normY) * scrH))
+        // Map normalized 0…1 coordinates onto the currently-streamed display.
+        let bounds = CGDisplayBounds(activeDisplayID)
+        guard !bounds.isNull else { return }
+        let pt = clampToScreen(CGPoint(
+            x: bounds.minX + CGFloat(normX) * bounds.width,
+            y: bounds.minY + CGFloat(normY) * bounds.height
+        ))
         let type: CGEventType = leftButtonDown ? .leftMouseDragged : .mouseMoved
         CGEvent(mouseEventSource: nil,
                 mouseType: type,
@@ -136,11 +138,20 @@ final class InputSimulator {
     }
 
     private func clickMouse(button: ControlEvent.MouseButton) {
-        setMouseButton(button: button, down: true)
-        setMouseButton(button: button, down: false)
+        setMouseButton(button: button, down: true,  clickCount: 1)
+        setMouseButton(button: button, down: false, clickCount: 1)
     }
 
-    private func setMouseButton(button: ControlEvent.MouseButton, down: Bool) {
+    private func doubleClickMouse(button: ControlEvent.MouseButton) {
+        // macOS requires clickCount=2 on the *second* down/up pair.
+        setMouseButton(button: button, down: true,  clickCount: 1)
+        setMouseButton(button: button, down: false, clickCount: 1)
+        setMouseButton(button: button, down: true,  clickCount: 2)
+        setMouseButton(button: button, down: false, clickCount: 2)
+    }
+
+    private func setMouseButton(button: ControlEvent.MouseButton, down: Bool,
+                                 clickCount: Int64 = 1) {
         let pt = currentCursorCG()
         let cgBtn: CGMouseButton = (button == .left) ? .left : .right
         let type: CGEventType
@@ -150,10 +161,12 @@ final class InputSimulator {
         case (.right, true):  type = .rightMouseDown
         case (.right, false): type = .rightMouseUp
         }
-        CGEvent(mouseEventSource: nil,
-                mouseType: type,
-                mouseCursorPosition: pt,
-                mouseButton: cgBtn)?.post(tap: .cghidEventTap)
+        guard let ev = CGEvent(mouseEventSource: nil,
+                               mouseType: type,
+                               mouseCursorPosition: pt,
+                               mouseButton: cgBtn) else { return }
+        ev.setIntegerValueField(.mouseEventClickState, value: clickCount)
+        ev.post(tap: .cghidEventTap)
     }
 
     private func scrollWheel(wheel1: Int32, wheel2: Int32) {
@@ -285,20 +298,30 @@ final class InputSimulator {
     private func typeText(_ text: String) {
         let utf16 = Array(text.utf16)
         guard !utf16.isEmpty else { return }
-        func makeEvent(_ down: Bool) -> CGEvent? {
-            CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)
-        }
-        if let ev = makeEvent(true) {
-            utf16.withUnsafeBufferPointer {
-                ev.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: $0.baseAddress!)
+
+        // Inject in chunks of ≤16 UTF-16 code-units.
+        // Sending all characters in one CGEvent pair causes the system event
+        // queue to drop characters silently when the string is long.
+        let chunkSize = 16
+        var offset = 0
+        while offset < utf16.count {
+            let end   = min(offset + chunkSize, utf16.count)
+            let chunk = Array(utf16[offset..<end])
+            func post(_ down: Bool) {
+                guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)
+                else { return }
+                chunk.withUnsafeBufferPointer {
+                    ev.keyboardSetUnicodeString(stringLength: chunk.count,
+                                               unicodeString: $0.baseAddress!)
+                }
+                ev.post(tap: .cghidEventTap)
             }
-            ev.post(tap: .cghidEventTap)
-        }
-        if let ev = makeEvent(false) {
-            utf16.withUnsafeBufferPointer {
-                ev.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: $0.baseAddress!)
+            post(true); post(false)
+            offset = end
+            if offset < utf16.count {
+                // 20 ms pause so the system event queue drains between chunks.
+                Thread.sleep(forTimeInterval: 0.02)
             }
-            ev.post(tap: .cghidEventTap)
         }
     }
 

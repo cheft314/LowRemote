@@ -26,7 +26,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -67,7 +66,6 @@ fun RemoteScreen(
     // ── Persistent prefs ──────────────────────────────────────────────────────
     var drawerOpen       by remember { mutableStateOf(false) }
     var mirrorLayout     by remember { mutableStateOf(false) }   // swap L↔R
-    var flipVertical     by remember { mutableStateOf(false) }   // 180° rotate
     var videoTouchscreen by remember { mutableStateOf(true) }
     var dragLockEnabled  by remember { mutableStateOf(false) }
 
@@ -90,8 +88,7 @@ fun RemoteScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .then(if (flipVertical) Modifier.rotate(180f) else Modifier),
+            .background(Color.Black),
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val screenHDp = with(density) { constraints.maxHeight.toDp() }
@@ -181,24 +178,8 @@ fun RemoteScreen(
         }
 
         // ── Right-side sliding drawer ─────────────────────────────────────────
-        // 注意 z-order：scrim 必须在抽屉之前渲染（Box 后来者在上），
-        // 否则 scrim 会遮住抽屉，抽屉所有触摸事件全部被 scrim 拦截。
-        // 正确顺序：① scrim（点击关闭） ② 抽屉（在最上层）
-
-        // ① 半透明遮罩 — 放在抽屉下层，只在抽屉外区域响应点击
-        if (drawerOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x55000000))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { drawerOpen = false },
-            )
-        }
-
-        // ② 抽屉本身 — 必须在 scrim 之后渲染，确保在最上层
+        // No scrim — the drawer slides in without a background overlay so the
+        // video/control area behind it stays fully visible and touchable.
         AnimatedVisibility(
             visible  = drawerOpen,
             enter    = slideInHorizontally(tween(260)) { it },
@@ -212,14 +193,12 @@ fun RemoteScreen(
                 screens          = screens,
                 curScreen        = curScreen,
                 mirrorLayout     = mirrorLayout,
-                flipVertical     = flipVertical,
                 videoTouchscreen = videoTouchscreen,
                 dragLockEnabled  = dragLockEnabled,
                 audioOn          = audioOn,
                 onChangeFps      = { session.changeFps(it) },
                 onSwitchScreen   = { session.switchScreen(it) },
                 onToggleMirror   = { mirrorLayout     = it },
-                onToggleFlip     = { flipVertical     = it },
                 onToggleVideoMode = { videoTouchscreen = it },
                 onToggleDragLock = { dragLockEnabled  = it },
                 onToggleAudio    = { on ->
@@ -251,14 +230,12 @@ private fun SessionDrawer(
     screens: List<RemoteSession.ScreenInfo>,
     curScreen: Int,
     mirrorLayout: Boolean,
-    flipVertical: Boolean,
     videoTouchscreen: Boolean,
     dragLockEnabled: Boolean,
     audioOn: Boolean,
     onChangeFps: (Int) -> Unit,
     onSwitchScreen: (Int) -> Unit,
     onToggleMirror: (Boolean) -> Unit,
-    onToggleFlip: (Boolean) -> Unit,
     onToggleVideoMode: (Boolean) -> Unit,
     onToggleDragLock: (Boolean) -> Unit,
     onToggleAudio: (Boolean) -> Unit,
@@ -327,10 +304,9 @@ private fun SessionDrawer(
                 )
             }
 
-            // Layout
+            // Layout — only mirror toggle remains; flip removed (use system rotation)
             DrawerSection("布局") {
                 DrawerSwitch("控制区在左（横向反转）", mirrorLayout, onToggleMirror)
-                DrawerSwitch("上下颠倒（180°旋转）",  flipVertical, onToggleFlip)
             }
 
             // Drag lock

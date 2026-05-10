@@ -47,6 +47,9 @@ sealed class ControlEvent {
     data class MouseClick(val button: Button) : ControlEvent() {
         override fun serialize() = "MC:${button.code}"
     }
+    data class MouseDoubleClick(val button: Button) : ControlEvent() {
+        override fun serialize() = "MDC:${button.code}"
+    }
     data class MouseDown(val button: Button) : ControlEvent() {
         override fun serialize() = "MD:${button.code}"
     }

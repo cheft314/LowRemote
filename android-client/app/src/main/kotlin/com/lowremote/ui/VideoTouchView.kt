@@ -70,6 +70,13 @@ class VideoTouchView @JvmOverloads constructor(
     private var sfDeltaDragging = false
     private var sfLongFired     = false   // long-press right-click already fired
 
+    /**
+     * Set to true when a multi-finger gesture (2+ fingers) was handled during
+     * this touch sequence so that ACTION_UP on the last finger does NOT also
+     * fire a single-finger tap/click.  Mirrors TouchpadView.multiFingerHandled.
+     */
+    private var multiFingerHandled = false
+
     // Double-tap tracking (supports triple-click too)
     private var lastTapT  = 0L; private var lastTapX  = 0f; private var lastTapY  = 0f
     private var prevTapT  = 0L; private var prevTapX  = 0f; private var prevTapY  = 0f
@@ -89,7 +96,8 @@ class VideoTouchView @JvmOverloads constructor(
         when (ev.actionMasked) {
 
             MotionEvent.ACTION_DOWN -> {
-                fingerCount     = 1
+                fingerCount        = 1
+                multiFingerHandled = false
                 sfStartX = ev.x; sfStartY = ev.y
                 sfLastX  = ev.x; sfLastY  = ev.y
                 sfStartT = SystemClock.uptimeMillis()
@@ -126,7 +134,10 @@ class VideoTouchView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_UP -> {
                 val remaining = count - 1
                 if (remaining < fingerCount) {
-                    if (fingerCount == 2) evalTwoFingerTap(ev)
+                    if (fingerCount == 2) {
+                        val fired = evalTwoFingerTap(ev)
+                        if (fired) multiFingerHandled = true
+                    }
                     fingerCount = remaining
                     if (remaining == 1) {
                         val i = if (ev.actionIndex == 0) 1 else 0
@@ -140,15 +151,23 @@ class VideoTouchView @JvmOverloads constructor(
                 val moved   = hypot(ev.x - sfStartX, ev.y - sfStartY)
                 when {
                     sfAbsDragging || sfDeltaDragging -> cancelActiveDrag()
-                    sfLongFired -> { /* right-click already sent */ }
+                    // Long-press right-click was already sent — don't fire tap
+                    sfLongFired -> { /* consumed */ }
+                    // Multi-finger gesture was handled — don't fire single tap
+                    multiFingerHandled -> { /* consumed */ }
                     fingerCount == 1 && elapsed < TAP_MS && moved < tapMovePx -> {
                         fireTap(ev.x, ev.y)
                     }
                 }
-                fingerCount = 0
+                fingerCount        = 0
+                multiFingerHandled = false
             }
 
-            MotionEvent.ACTION_CANCEL -> { cancelActiveDrag(); fingerCount = 0 }
+            MotionEvent.ACTION_CANCEL -> {
+                cancelActiveDrag()
+                fingerCount        = 0
+                multiFingerHandled = false
+            }
         }
         return true
     }
@@ -279,13 +298,18 @@ class VideoTouchView @JvmOverloads constructor(
         }
     }
 
-    private fun evalTwoFingerTap(ev: MotionEvent) {
+    private fun evalTwoFingerTap(ev: MotionEvent): Boolean {
         val elapsed = SystemClock.uptimeMillis() - sfStartT
         val totalScroll = hypot(tfScrollX, tfScrollY)
         if (elapsed < TAP_MS + 60 && totalScroll < tapMovePx) {
             onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.RIGHT))
             performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            // Clear tap chain so the next single-tap isn't confused with
+            // a double-click relative to this right-click timestamp
+            lastTapT = 0L; prevTapT = 0L
+            return true
         }
+        return false
     }
 
     private fun cancelActiveDrag() {

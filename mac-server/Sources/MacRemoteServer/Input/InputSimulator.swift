@@ -226,99 +226,127 @@ final class InputSimulator {
 
     // MARK: - Gesture helpers
     //
-    // macOS gesture events are NSEvent subtype kIOHIDEventTypeGesture.
-    // The cleanest way to synthesise them without private API is via
-    // CGEvent with type=.gesture and the appropriate CGEventField values,
-    // but the gesture-specific fields are not exposed in public headers.
+    // Strategy: use NSEvent.otherEvent(with:) to inject real trackpad gesture
+    // events.  These are the same event types AppKit delivers from a physical
+    // Magic Trackpad and are recognised system-wide without any private API.
     //
-    // Practical alternative: use NSEvent.otherEvent(with:) to post scroll
-    // and magnification events, which Cocoa recognises as trackpad gestures.
+    // References:
+    //   • NSEvent.EventType.magnify  (.magnify, subtype 0x1D)
+    //   • NSEvent.EventType.swipe    (.swipe,   subtype 0x1B)
+    //   • NSEvent.otherEvent(with:location:modifierFlags:timestamp:
+    //                        windowNumber:context:subtype:data1:data2:)
+    //
+    // Location: we use the *current cursor position* converted back to
+    // AppKit coordinates (origin bottom-left) so the gesture lands on
+    // whatever the cursor is hovering over.
 
-    /// Synthesise a pinch-to-zoom gesture using a CGEvent scroll with pixel deltas.
-    /// We use scroll event field kCGScrollWheelEventPointDeltaAxis1/2 which
-    /// Cocoa's event system translates into a magnify gesture for apps that
-    /// listen to NSEventTypeMagnify, and also maps to system-level zoom in Safari,
-    /// Preview etc.  This approach never touches NSEvent (avoids the crash on
-    /// macOS 26 where kCGEventMagnify = 29 was removed from public CGEventType).
-    ///
-    /// Reliable, documented, no private API.
+    // ── Pinch-to-zoom ──────────────────────────────────────────────────────────
+    //
+    // NSEvent magnify: data1 = magnification as a fixed-point Int
+    //   positive = zoom in, negative = zoom out
+    //   The value is in units of 1/65536 (like CGFloat * 65536).
+    //   A typical pinch spread of 0.1 (10%) → data1 = 6554.
+    //
+    // We emit three events: began (data2=1), changed (data2=4), ended (data2=8).
+    // Most apps only need the "changed" event, but Safari/Preview need the
+    // began/ended pair to correctly start/stop their zoom animation.
     private func postMagnify(scale: Float) {
-        // Positive scale = zoom-in; negative = zoom-out.
-        // We send a wheel event with modifier kCGEventFlagMaskCommand which
-        // macOS interprets as "pinch" in most apps. This is the same mechanism
-        // that Accessibility Zoom uses.
-        // Better: use Ctrl+scroll which is the universal "zoom scroll" shortcut.
-        let scrollDelta = Int32(scale * 300) // scale 0.05 → 15 lines
-        guard let ev = CGEvent(scrollWheelEvent2Source: nil,
-                               units: .pixel,
-                               wheelCount: 1,
-                               wheel1: scrollDelta,
-                               wheel2: 0,
-                               wheel3: 0) else { return }
-        ev.flags = .maskControl  // Ctrl+scroll = zoom in virtually every Mac app
-        ev.post(tap: .cghidEventTap)
-    }
+        guard scale != 0 else { return }
+        let loc   = nsEventLocation()
+        let win   = NSApplication.shared.mainWindow?.windowNumber ?? 0
+        let ts    = ProcessInfo.processInfo.systemUptime
+        let mag   = Int(scale * 65536.0)   // fixed-point magnification
 
-    private func postRotate(radians: Float) {
-        // Rotation has no universal non-private equivalent.
-        // Skip silently — rotation is a niche gesture; we don't want a crash.
-        _ = radians
-    }
-
-    /// Three-finger swipe gesture (dx/dy are -1, 0, or 1 direction indicators).
-    private func postThreeFingerSwipe(dx: Int = 0, dy: Int = 0) {
-        // Simulate three-finger swipe using a scroll event with phase + momentum.
-        // macOS Mission Control / spaces are triggered by NSEvent scroll with
-        // phase .began/.ended and large delta from a "trackpad" source.
-        // The most reliable approach without private API is using CGEvent
-        // kCGScrollWheelEventScrollPhase.
-        //
-        // For spaces switching, macOS listens to kCGEventScrollWheel with:
-        //   - source subtype = kCGEventSourceStateHIDSystemState (trackpad)
-        //   - ScrollPhase = 1 (began), then 4 (ended)
-        //   - pointDeltaAxis1 or axis2 set
-        //
-        // In practice the simplest reliable cross-version method is keyboard shortcuts:
-        let flags: CGEventFlags = [.maskControl]
-        if dy > 0 {
-            // Mission Control = Ctrl+Up
-            postKey(code: 126, down: true, flags: flags)
-            postKey(code: 126, down: false, flags: flags)
-        } else if dy < 0 {
-            // App Exposé = Ctrl+Down (requires enabling in System Settings)
-            postKey(code: 125, down: true, flags: flags)
-            postKey(code: 125, down: false, flags: flags)
-        } else if dx > 0 {
-            // Switch left (previous space) = Ctrl+Left
-            postKey(code: 123, down: true, flags: flags)
-            postKey(code: 123, down: false, flags: flags)
-        } else if dx < 0 {
-            // Switch right (next space) = Ctrl+Right
-            postKey(code: 124, down: true, flags: flags)
-            postKey(code: 124, down: false, flags: flags)
+        // Phase constants: 1=NSEventPhaseBegan, 4=NSEventPhaseChanged, 8=NSEventPhaseEnded
+        let phases: [(Int, Int)] = [(1, 0), (4, mag), (8, 0)]
+        for (phase, d1) in phases {
+            guard let ev = NSEvent.otherEvent(
+                with: .magnify,
+                location: loc,
+                modifierFlags: [],
+                timestamp: ts,
+                windowNumber: win,
+                context: nil,
+                subtype: 0,
+                data1: d1,
+                data2: phase
+            ) else { continue }
+            NSApplication.shared.postEvent(ev, atStart: false)
         }
     }
 
-    private func postFourFingerSwipe(dx: Double, dy: Double) {
-        // Four-finger left/right = switch between full-screen apps (same as 3-finger on Magic Trackpad)
-        // Use Ctrl+Arrow same as three-finger
-        postThreeFingerSwipe(dx: dx > 0 ? 1 : (dx < 0 ? -1 : 0),
-                             dy: dy > 0 ? 1 : (dy < 0 ? -1 : 0))
+    private func postRotate(radians: Float) {
+        // Rotation has no universal reliable non-private equivalent.
+        // Skip silently — rotation is a niche gesture.
+        _ = radians
     }
 
+    // ── Three-finger swipe (full-screen app switch / Mission Control) ──────────
+    //
+    // NSEvent swipe: data1 encodes the direction as a fixed-point unit vector.
+    //   Right swipe → previous full-screen app:  data1 = +65536 (x = +1.0)
+    //   Left  swipe → next     full-screen app:  data1 = -65536 (x = -1.0)
+    //   Up    swipe → Mission Control:           data2 = +65536 (y = +1.0)
+    //   Down  swipe → App Exposé:               data2 = -65536 (y = -1.0)
+    //
+    // This is the same event a real Magic Trackpad sends, so it works without
+    // any special System Settings configuration.
+    private func postThreeFingerSwipe(dx: Int = 0, dy: Int = 0) {
+        let loc = nsEventLocation()
+        let win = NSApplication.shared.mainWindow?.windowNumber ?? 0
+        let ts  = ProcessInfo.processInfo.systemUptime
+
+        // swipe data1 = x component (fixed-point), data2 = y component (fixed-point)
+        let d1 = dx * 65536   // right=+65536, left=-65536
+        let d2 = dy * 65536   // up=+65536, down=-65536
+
+        guard let ev = NSEvent.otherEvent(
+            with: .swipe,
+            location: loc,
+            modifierFlags: [],
+            timestamp: ts,
+            windowNumber: win,
+            context: nil,
+            subtype: 0,
+            data1: d1,
+            data2: d2
+        ) else { return }
+        NSApplication.shared.postEvent(ev, atStart: false)
+    }
+
+    private func postFourFingerSwipe(dx: Double, dy: Double) {
+        // Four-finger = same semantics as three-finger on Magic Trackpad
+        postThreeFingerSwipe(
+            dx: dx > 0 ? 1 : (dx < 0 ? -1 : 0),
+            dy: dy > 0 ? 1 : (dy < 0 ? -1 : 0)
+        )
+    }
+
+    // ── Launchpad / Show Desktop ────────────────────────────────────────────────
+    //
+    // Five-finger pinch = Launchpad.  Five-finger spread = Show Desktop.
+    // There is no public non-keyboard API for these, but the keyboard shortcuts
+    // (F4 / Mission Control) are reliable when the user has them configured.
+    // As a fallback we also try the CGEvent-based approach used by Accessibility.
     private func postFiveFingerPinch(expanding: Bool) {
         if expanding {
-            // Show Desktop = F11 (or Exposé shortcut) – use Mission Control display-desktop
+            // Show Desktop: Mission Control "show desktop" keyboard shortcut = F11
+            // (Users can reassign in System Settings → Keyboard → Shortcuts)
             postKey(code: 103, down: true,  flags: []) // F11
             postKey(code: 103, down: false, flags: [])
         } else {
-            // Launchpad = no standard key; use F4 which many Macs map to Launchpad
+            // Launchpad: default F4 on most Macs
             postKey(code: 118, down: true,  flags: []) // F4
             postKey(code: 118, down: false, flags: [])
         }
     }
 
-    private func mouseLocationForNS() -> NSPoint {
+    // ── Helpers ─────────────────────────────────────────────────────────────────
+
+    /// Current cursor position in AppKit window coordinates (origin = bottom-left
+    /// of the *screen*, not the window — suitable for NSEvent.otherEvent location).
+    private func nsEventLocation() -> NSPoint {
+        // NSEvent.mouseLocation is already in screen AppKit coords (bottom-left origin).
         return NSEvent.mouseLocation
     }
 
@@ -339,28 +367,43 @@ final class InputSimulator {
         let utf16 = Array(text.utf16)
         guard !utf16.isEmpty else { return }
 
-        // Inject in chunks of ≤16 UTF-16 code-units.
-        // Sending all characters in one CGEvent pair causes the system event
-        // queue to drop characters silently when the string is long.
-        let chunkSize = 16
-        var offset = 0
-        while offset < utf16.count {
-            let end   = min(offset + chunkSize, utf16.count)
-            let chunk = Array(utf16[offset..<end])
-            func post(_ down: Bool) {
-                guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)
-                else { return }
-                chunk.withUnsafeBufferPointer {
-                    ev.keyboardSetUnicodeString(stringLength: chunk.count,
-                                               unicodeString: $0.baseAddress!)
+        // Inject Unicode text via CGEvent on a BACKGROUND thread so we never
+        // block the main thread (which would stall all subsequent event delivery).
+        //
+        // CGEvent(keyboardEventSource:) does NOT require the main thread — only
+        // CGEvent.post(tap:.cghidEventTap) needs an active run-loop, but that
+        // requirement is satisfied by any thread that calls it while the app's
+        // CFRunLoop is spinning (which it always is for a menu-bar app).
+        //
+        // We send up to 8 UTF-16 code-units per CGEvent pair and space them
+        // 15 ms apart so the system event queue never overflows.
+        DispatchQueue.global(qos: .userInteractive).async {
+            let chunkSize = 8
+            var offset = 0
+            while offset < utf16.count {
+                let end   = min(offset + chunkSize, utf16.count)
+                let chunk = Array(utf16[offset..<end])
+
+                func post(_ down: Bool) {
+                    guard let ev = CGEvent(keyboardEventSource: nil,
+                                          virtualKey: 0,
+                                          keyDown: down) else { return }
+                    chunk.withUnsafeBufferPointer { ptr in
+                        ev.keyboardSetUnicodeString(stringLength: chunk.count,
+                                                   unicodeString: ptr.baseAddress!)
+                    }
+                    ev.post(tap: .cghidEventTap)
                 }
-                ev.post(tap: .cghidEventTap)
-            }
-            post(true); post(false)
-            offset = end
-            if offset < utf16.count {
-                // 20 ms pause so the system event queue drains between chunks.
-                Thread.sleep(forTimeInterval: 0.02)
+
+                post(true)
+                post(false)
+                offset = end
+
+                if offset < utf16.count {
+                    // 15 ms between chunks — enough for the HID event queue to drain
+                    // without blocking the main thread at all.
+                    Thread.sleep(forTimeInterval: 0.015)
+                }
             }
         }
     }

@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import com.lowremote.audio.AudioPlayer
@@ -151,6 +152,92 @@ class RemoteSession {
         }
     }
 
+    // ── File transfer ──────────────────────────────────────────────────────────
+    /**
+     * Send one or more files to the Mac over the existing TCP channel.
+     *
+     * Protocol (line-based, same TCP socket used for control commands):
+     *   Android → Mac:  FILE_START:<filename>:<filesize>\n
+     *   Mac     → Android: FILE_READY\n
+     *   Android → Mac:  <raw bytes of file>   (streamed directly, no framing)
+     *   Android → Mac:  FILE_END\n
+     *   Mac     → Android: FILE_OK:<filename>\n   (or FILE_ERR:<reason>)
+     *
+     * Files are transferred sequentially.  Each Uri is resolved via
+     * ContentResolver so the caller does not need to manage file descriptors.
+     */
+    fun sendFiles(uris: List<android.net.Uri>, context: android.content.Context) {
+        if (_state.value != State.Connected || uris.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            for (uri in uris) {
+                sendSingleFile(uri, context)
+            }
+        }
+    }
+
+    private suspend fun sendSingleFile(uri: android.net.Uri, context: android.content.Context) {
+        val cr       = context.contentResolver
+        val fileName = resolveFileName(uri, cr)
+        val fileSize = resolveFileSize(uri, cr)
+        if (fileSize <= 0L) {
+            Log.w(TAG, "sendFile: cannot determine size for $uri")
+            return
+        }
+
+        Log.d(TAG, "sendFile: $fileName  $fileSize bytes")
+
+        // 1. Announce the transfer
+        tcp.send("FILE_START:$fileName:$fileSize")
+
+        // 2. Wait for Mac's green-light (FILE_READY), max 5 s
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (fileReadySignal) { fileReadySignal = false; break }
+            kotlinx.coroutines.delay(50)
+        }
+
+        // 3. Stream raw bytes
+        try {
+            cr.openInputStream(uri)?.use { stream ->
+                tcp.sendRawStream(stream, fileSize)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "sendFile stream error: ${e.message}")
+            return
+        }
+
+        // 4. End marker
+        tcp.send("FILE_END")
+
+        Log.d(TAG, "sendFile done: $fileName")
+    }
+
+    @Volatile private var fileReadySignal = false
+
+    private fun resolveFileName(uri: android.net.Uri, cr: android.content.ContentResolver): String {
+        // Try ContentResolver display name first
+        cr.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) return cursor.getString(idx)
+                }
+            }
+        // Fallback: last path segment
+        return uri.lastPathSegment ?: "file_${System.currentTimeMillis()}"
+    }
+
+    private fun resolveFileSize(uri: android.net.Uri, cr: android.content.ContentResolver): Long {
+        cr.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                    if (idx >= 0 && !cursor.isNull(idx)) return cursor.getLong(idx)
+                }
+            }
+        return -1L
+    }
+
     // ── Audio ──────────────────────────────────────────────────────────────────
     /**
      * Toggle microphone capture and streaming to Mac.
@@ -276,6 +363,14 @@ class RemoteSession {
             }
             trimmed == "OK" -> startDecoderIfReady()
             trimmed == "PONG" -> { /* heartbeat */ }
+            trimmed == "FILE_READY" -> { fileReadySignal = true }
+            trimmed.startsWith("FILE_OK:") -> {
+                val name = trimmed.removePrefix("FILE_OK:")
+                Log.d(TAG, "File received by Mac: $name")
+            }
+            trimmed.startsWith("FILE_ERR:") -> {
+                Log.w(TAG, "Mac file error: ${trimmed.removePrefix("FILE_ERR:")}")
+            }
         }
     }
 

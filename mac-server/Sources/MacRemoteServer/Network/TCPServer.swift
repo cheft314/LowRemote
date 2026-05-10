@@ -18,6 +18,13 @@ final class TCPServer {
     var onCommand: ((String, String) -> Void)?
     var onClientConnected: ((String) -> Void)?
     var onClientDisconnected: (() -> Void)?
+    /// Called when FILE_START is parsed: return the expected byte count so the
+    /// server can switch the connection into binary-receive mode.
+    var onFileStart: ((String /*filename*/, Int /*size*/, String /*clientHost*/) -> Void)?
+    /// Called with each raw chunk of file data as it arrives.
+    var onFileChunk: ((Data, String /*clientHost*/) -> Void)?
+    /// Called after FILE_END is received.
+    var onFileEnd: ((String /*clientHost*/) -> Void)?
 
     init(port: UInt16) {
         self.port = NWEndpoint.Port(rawValue: port)!
@@ -75,8 +82,31 @@ final class TCPServer {
 
         let remoteHost = Self.remoteHostString(conn) ?? "unknown"
 
-        client.onLine = { [weak self] line in
-            self?.onCommand?(line, remoteHost)
+        client.onLine = { [weak self, weak client] line in
+            guard let self = self else { return }
+            // Intercept FILE_START / FILE_END before forwarding to onCommand
+            if line.hasPrefix("FILE_START:") {
+                // Format: FILE_START:<filename>:<filesize>
+                let rest  = String(line.dropFirst("FILE_START:".count))
+                let parts = rest.split(separator: ":", maxSplits: 1).map(String.init)
+                if parts.count == 2,
+                   let sz = Int(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    let filename = parts[0]
+                    // Notify AppDelegate so it can prepare the file on disk
+                    self.onFileStart?(filename, sz, remoteHost)
+                    // Tell this connection to switch to binary mode
+                    client?.beginFileReceive(size: sz)
+                    // Send green-light back to Android
+                    self.broadcast("FILE_READY\n")
+                }
+            } else if line.trimmingCharacters(in: .whitespacesAndNewlines) == "FILE_END" {
+                self.onFileEnd?(remoteHost)
+            } else {
+                self.onCommand?(line, remoteHost)
+            }
+        }
+        client.onFileData = { [weak self] chunk in
+            self?.onFileChunk?(chunk, remoteHost)
         }
         client.onClosed = { [weak self] in
             guard let self = self else { return }
@@ -113,9 +143,19 @@ final class TCPServer {
 private final class ClientConnection {
     private let connection: NWConnection
     private let queue: DispatchQueue
+
+    /// Receive buffer — accumulates raw bytes from the network.
     private var buffer = Data()
 
-    var onLine: ((String) -> Void)?
+    // ── File-receive state ────────────────────────────────────────────────────
+    /// When > 0 the connection is in binary-receive mode: the next
+    /// `fileBytesRemaining` bytes belong to the current file transfer.
+    private var fileBytesRemaining: Int = 0
+    private var fileBuffer = Data()
+    var onFileData: ((Data) -> Void)?   // called with chunks while receiving
+    var onFileEnd:  (() -> Void)?       // called after FILE_END line is drained
+
+    var onLine:   ((String) -> Void)?
     var onClosed: (() -> Void)?
 
     init(connection: NWConnection, queue: DispatchQueue) {
@@ -145,12 +185,21 @@ private final class ClientConnection {
         connection.send(content: data, completion: .contentProcessed { _ in })
     }
 
+    /// Switch into binary-receive mode for a file of `size` bytes.
+    /// Safe to call multiple times (resets state for each new file).
+    func beginFileReceive(size: Int) {
+        fileBytesRemaining = size
+        fileBuffer = Data()   // always start fresh — never carry over from a previous file
+    }
+
+    // MARK: - Private receive loop
+
     private func receive() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self = self else { return }
             if let data = data, !data.isEmpty {
                 self.buffer.append(data)
-                self.drainLines()
+                self.drainBuffer()
             }
             if error != nil || isComplete {
                 self.onClosed?()
@@ -161,12 +210,38 @@ private final class ClientConnection {
         }
     }
 
-    private func drainLines() {
-        while let idx = buffer.firstIndex(of: 0x0A) { // '\n'
-            let lineData = buffer.subdata(in: 0..<idx)
-            buffer.removeSubrange(0...idx)
-            if let line = String(data: lineData, encoding: .utf8) {
-                onLine?(line)
+    /// Main demux: consume bytes from `buffer` in the correct mode.
+    ///
+    /// IMPORTANT: Swift `Data` indices are NOT always 0-based after mutations.
+    /// We always rebuild `buffer` as a fresh `Data` to ensure startIndex == 0
+    /// and avoid subscript-out-of-bounds crashes on Foundation-bridged buffers.
+    private func drainBuffer() {
+        while !buffer.isEmpty {
+            if fileBytesRemaining > 0 {
+                // ── Binary mode: consume up to fileBytesRemaining bytes ────────
+                let take = min(fileBytesRemaining, buffer.count)
+                let chunk = Data(buffer.prefix(take))
+                // Rebuild buffer from scratch to guarantee startIndex == 0
+                buffer = buffer.count > take ? Data(buffer[take...]) : Data()
+                fileBuffer.append(chunk)
+                fileBytesRemaining -= take
+                onFileData?(chunk)
+                // When fileBytesRemaining reaches 0, continue the loop in
+                // line mode to consume the trailing FILE_END\n from the wire.
+            } else {
+                // ── Line mode: drain \n-delimited lines ───────────────────────
+                // Use a manual byte scan so we are never confused by Data's
+                // internal index representation after prior mutations.
+                guard let newlineOffset = buffer.firstIndex(of: 0x0A) else { break }
+                // Safety: ensure the slice range is valid
+                guard newlineOffset <= buffer.endIndex else { break }
+                let lineData = Data(buffer[buffer.startIndex..<newlineOffset])
+                // Advance past the '\n' byte
+                let nextStart = buffer.index(after: newlineOffset)
+                buffer = nextStart < buffer.endIndex ? Data(buffer[nextStart...]) : Data()
+                if let line = String(data: lineData, encoding: .utf8) {
+                    onLine?(line)
+                }
             }
         }
     }

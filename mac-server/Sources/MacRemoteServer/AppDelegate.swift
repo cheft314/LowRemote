@@ -25,6 +25,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentDisplayIndex: Int = 0
     private var audioReceiver: AudioReceiver?        // Android mic → Mac speaker
 
+    // ── File transfer state ────────────────────────────────────────────────────
+    private var pendingFileName: String?
+    private var pendingFileSize: Int = 0
+    private var pendingFileBytesReceived: Int = 0
+    private var pendingFileHandle: FileHandle?
+
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -125,6 +131,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updateStatus("等待连接")
             self?.stopStreaming()
             self?.clientEndpoint = nil
+        }
+        // ── File transfer callbacks ────────────────────────────────────────────
+        tcpServer.onFileStart = { [weak self] filename, size, _ in
+            self?.beginFileReceive(filename: filename, size: size)
+        }
+        tcpServer.onFileChunk = { [weak self] chunk, _ in
+            self?.appendFileChunk(chunk)
+        }
+        tcpServer.onFileEnd = { [weak self] _ in
+            self?.finalizeFileReceive()
         }
         tcpServer.start()
 
@@ -347,5 +363,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func nextFrameId() -> UInt32 {
         frameIdCounter &+= 1
         return frameIdCounter
+    }
+
+    // MARK: - File Receive
+
+    /// Prepare a writable file in ~/Downloads for the incoming transfer.
+    private func beginFileReceive(filename: String, size: Int) {
+        // Sanitise the filename: strip path separators to prevent traversal attacks.
+        let safe = filename
+            .components(separatedBy: "/").last?
+            .components(separatedBy: "\\").last ?? "file"
+        let downloadsURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads")
+
+        // Create Downloads directory if it somehow doesn't exist.
+        try? FileManager.default.createDirectory(at: downloadsURL,
+                                                  withIntermediateDirectories: true)
+
+        // Avoid overwriting an existing file by appending a counter.
+        var destURL = downloadsURL.appendingPathComponent(safe)
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            let name = (safe as NSString).deletingPathExtension
+            let ext  = (safe as NSString).pathExtension
+            var n = 1
+            repeat {
+                let candidate = ext.isEmpty ? "\(name)_\(n)" : "\(name)_\(n).\(ext)"
+                destURL = downloadsURL.appendingPathComponent(candidate)
+                n += 1
+            } while FileManager.default.fileExists(atPath: destURL.path) && n < 1000
+        }
+
+        FileManager.default.createFile(atPath: destURL.path, contents: nil)
+        pendingFileHandle        = try? FileHandle(forWritingTo: destURL)
+        pendingFileName          = destURL.lastPathComponent
+        pendingFileSize          = size
+        pendingFileBytesReceived = 0
+
+        NSLog("[FileReceive] started: \(destURL.path)  expected \(size) bytes")
+    }
+
+    /// Write a raw chunk to the open file handle.
+    private func appendFileChunk(_ chunk: Data) {
+        guard let fh = pendingFileHandle else { return }
+        fh.write(chunk)
+        pendingFileBytesReceived += chunk.count
+    }
+
+    /// Close the file and notify the Android client.
+    private func finalizeFileReceive() {
+        guard let fh = pendingFileHandle else { return }
+        fh.closeFile()
+        let name     = pendingFileName ?? "file"
+        let received = pendingFileBytesReceived
+        let expected = pendingFileSize
+
+        pendingFileHandle        = nil
+        pendingFileName          = nil
+        pendingFileSize          = 0
+        pendingFileBytesReceived = 0
+
+        if received == expected {
+            NSLog("[FileReceive] complete: \(name)  \(received) bytes")
+            tcpServer.broadcast("FILE_OK:\(name)\n")
+        } else {
+            NSLog("[FileReceive] size mismatch: \(name)  got \(received), expected \(expected)")
+            tcpServer.broadcast("FILE_ERR:size mismatch (\(received)/\(expected))\n")
+        }
     }
 }

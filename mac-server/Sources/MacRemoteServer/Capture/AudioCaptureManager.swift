@@ -46,15 +46,26 @@ final class AudioCaptureManager {
         let e = AVAudioEngine()
         engine = e
 
-        // prepare() must be called before reading any format from the engine.
-        e.prepare()
+        // IMPORTANT: Do NOT call e.prepare() here.
+        // On macOS 14+ (and macOS 26) AVAudioEngine.prepare() asserts
+        // "inputNode != nullptr || outputNode != nullptr".  This assertion
+        // fires when the engine graph has no nodes yet — which is always true
+        // on a freshly-created engine before installTap is called.
+        //
+        // Correct sequence (confirmed with Apple DTS):
+        //   1. Access inputNode  ← registers it in the internal graph
+        //   2. installTap        ← wires it into the graph
+        //   3. engine.start()   ← prepare() is called internally here
+        //
+        // Reading inputNode.outputFormat(forBus:0) before installTap is safe
+        // because accessing the property is enough to register the node.
 
         let inputNode = e.inputNode
         let hwFmt     = inputNode.outputFormat(forBus: 0)
         NSLog("[AudioCapture] hw input format: \(hwFmt)")
 
         guard hwFmt.sampleRate > 0 else {
-            NSLog("[AudioCapture] sampleRate=0, no audio input device available")
+            NSLog("[AudioCapture] sampleRate=0 — no audio input device available")
             engine = nil; return
         }
 
@@ -65,21 +76,23 @@ final class AudioCaptureManager {
                 converter = conv
                 NSLog("[AudioCapture] converter: \(Int(hwFmt.sampleRate)) Hz \(hwFmt.channelCount)ch → 16kHz mono Int16")
             } else {
-                NSLog("[AudioCapture] cannot build converter — will send raw hw format")
-                converter = nil
+                NSLog("[AudioCapture] cannot build converter — sending raw")
             }
         }
 
+        // installTap wires the inputNode into the engine graph.
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFmt) {
             [weak self] buffer, _ in
             self?.handleBuffer(buffer)
         }
 
+        // engine.start() calls prepare() internally after the graph is ready.
         do {
             try e.start()
-            NSLog("[AudioCapture] engine started")
+            NSLog("[AudioCapture] engine started (\(Int(hwFmt.sampleRate)) Hz)")
         } catch {
             NSLog("[AudioCapture] engine.start() error: \(error)")
+            e.inputNode.removeTap(onBus: 0)
             engine = nil
         }
     }

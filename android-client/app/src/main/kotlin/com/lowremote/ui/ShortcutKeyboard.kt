@@ -333,12 +333,16 @@ private fun KeyButton(
 private data class Shortcut(val label: String, val event: ControlEvent)
 
 private fun buildShortcuts(): List<Shortcut> = listOf(
-    // ── Row 1: 最高频编辑键 ─────────────────────────────────────────────────
+    // ── Row 1: 系统手势快捷键（新增，最前） ─────────────────────────────────
+    Shortcut("Launchpad",    ControlEvent.Launchpad),
+    Shortcut("程序堆叠",      ControlEvent.MissionControl),
+    Shortcut("显示桌面",      ControlEvent.ShowDesktop),
+    // ── Row 2: 最高频编辑键 ─────────────────────────────────────────────────
     Shortcut("⌫",    ControlEvent.KeyPress(MacKeyCodes.DELETE)),
     Shortcut("⏎",    ControlEvent.KeyPress(MacKeyCodes.RETURN)),
     Shortcut("⌘C",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.C)),
     Shortcut("⌘V",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.V)),
-    // ── Row 2: 常用功能键（前移） ────────────────────────────────────────────
+    // ── Row 3: 常用功能键 ────────────────────────────────────────────────────
     Shortcut("Esc",  ControlEvent.KeyPress(MacKeyCodes.ESCAPE)),
     Shortcut("⌘Tab", ControlEvent.KeyCombo("cmd",       MacKeyCodes.TAB)),
     Shortcut("⌘␣",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.SPACE)),

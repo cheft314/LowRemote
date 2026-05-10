@@ -439,6 +439,8 @@ class TouchpadView @JvmOverloads constructor(
             2 -> if (tfMode == TwoMode.UNDECIDED || tfTotalMove < tapMovePx) {
                 onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.RIGHT))
                 haptic(HapticFeedbackConstants.CONTEXT_CLICK)
+                // Clear tap chain so next single-tap isn't treated as double-click
+                lastTapTime = 0L; prevTapTime = 0L
                 true
             } else false
             // 3-finger tap: ignored (too easy to trigger accidentally)

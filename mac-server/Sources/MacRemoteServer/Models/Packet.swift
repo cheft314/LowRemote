@@ -22,6 +22,8 @@ enum Packet {
     static let typeControl: UInt8 = 0x02
     /// Raw PCM audio from Android microphone: 16 kHz, mono, 16-bit little-endian.
     static let typeAudio: UInt8   = 0x03
+    /// Raw PCM audio from Mac system output: 48 kHz, stereo, Float32 LE interleaved.
+    static let typeSystemAudio: UInt8 = 0x04
 
     static let flagKeyframe: UInt8 = 0x01
 
@@ -37,6 +39,14 @@ enum Packet {
                     pktTotal: pktTotal,
                     type: typeVideo,
                     flags: isKeyframe ? flagKeyframe : 0)
+        buf.append(payload)
+        return buf
+    }
+
+    static func encodeSystemAudio(frameId: UInt32, payload: Data) -> Data {
+        var buf = Data(capacity: headerSize + payload.count)
+        writeHeader(into: &buf, frameId: frameId, pktIdx: 0, pktTotal: 1,
+                    type: typeSystemAudio, flags: 0)
         buf.append(payload)
         return buf
     }

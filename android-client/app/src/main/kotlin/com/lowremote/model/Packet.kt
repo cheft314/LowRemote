@@ -26,7 +26,8 @@ object Packet {
     /**
      * Build a control-event packet ready for `DatagramSocket.send`.
      */
-    const val TYPE_AUDIO: Byte = 0x03
+    const val TYPE_AUDIO: Byte = 0x03          // Android mic → Mac
+    const val TYPE_SYSTEM_AUDIO: Byte = 0x04   // Mac system audio → Android
 
     fun encodeAudio(frameId: Int, pcm: ByteArray): ByteArray {
         val buf = ByteBuffer.allocate(HEADER_SIZE + pcm.size).order(ByteOrder.LITTLE_ENDIAN)

@@ -7,6 +7,7 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
 import android.view.Surface
+import com.lowremote.audio.AudioPlayer
 import com.lowremote.codec.FrameAssembler
 import com.lowremote.codec.H265Decoder
 import com.lowremote.model.ControlEvent
@@ -45,6 +46,9 @@ class RemoteSession {
     private val sender   = UdpSender()
     private val assembler = FrameAssembler()
 
+    // ── Mac-system-audio player (type 0x04) ────────────────────────────────────
+    private val macAudioPlayer = AudioPlayer()
+
     private var decoder: H265Decoder? = null
     @Volatile private var surface: Surface? = null
     private var heartbeatJob: Job? = null
@@ -79,7 +83,10 @@ class RemoteSession {
     init {
         assembler.onFrameReady = { bytes, isKeyframe -> decoder?.feed(bytes, isKeyframe) }
         receiver.onPacket = { parsed, payload, _ ->
-            if (parsed.type == Packet.TYPE_VIDEO) assembler.onPacket(parsed, payload)
+            when (parsed.type) {
+                Packet.TYPE_VIDEO        -> assembler.onPacket(parsed, payload)
+                Packet.TYPE_SYSTEM_AUDIO -> macAudioPlayer.write(payload)
+            }
         }
         tcp.onLine       = { line -> handleTcpLine(line) }
         tcp.onDisconnected = { scope.launch { teardown() } }
@@ -111,6 +118,7 @@ class RemoteSession {
 
             tcp.send("FPS:$fps")
             _state.value = State.Connected
+            macAudioPlayer.start()
             startHeartbeat()
         }
     }
@@ -302,6 +310,7 @@ class RemoteSession {
         if (_audioEnabled.value) tcp.send("AUDIO_OFF")
         stopAudioCapture()
         _audioEnabled.value = false
+        macAudioPlayer.stop()
         tcp.disconnect()
         receiver.stop()
         synchronized(decoderLock) { decoder?.stop(); decoder = null }

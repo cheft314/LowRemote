@@ -302,14 +302,13 @@ class TouchpadView @JvmOverloads constructor(
 
     // ── Tap logic ─────────────────────────────────────────────────────────────
     private fun fireTap() {
-        val now = SystemClock.uptimeMillis()
+        val now       = SystemClock.uptimeMillis()
         val gapToLast = now - lastTapTime
         val nearLast  = hypot(sfStartX - lastTapX, sfStartY - lastTapY) < tapMovePx * 3f
 
         if (gapToLast < DOUBLE_TAP_MS && nearLast) {
-            // Double-tap: send two clicks in rapid succession
-            onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-            onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
+            // Real double-click: Mac needs clickCount=2, not two separate MC events.
+            onEvent?.invoke(ControlEvent.MouseDoubleClick(ControlEvent.Button.LEFT))
             haptic(HapticFeedbackConstants.VIRTUAL_KEY)
             lastTapTime = 0L // reset so next tap doesn't triple-click
         } else {

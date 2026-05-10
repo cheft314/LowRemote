@@ -4,22 +4,26 @@ import AppKit
 
 /// Injects mouse/keyboard events into the macOS system via CGEvent.
 ///
-/// Requires the host process to have the Accessibility permission granted.
-/// Mouse movement uses delta mode (accumulates onto the current cursor
-/// position), which gives trackpad-like feel on the phone side.
+/// 必须从主线程调用（由 UDPServer 的 DispatchQueue.main.async 保证）。
+/// CGEvent.post(tap: .cghidEventTap) 需要辅助功能权限。
 final class InputSimulator {
 
     // Remember whether we're mid-drag so ACTION_MOVE becomes leftMouseDragged.
     private var leftButtonDown = false
 
     func handleEvent(_ event: ControlEvent) {
+        // 双重保险：强制在主线程执行
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.handleEvent(event) }
+            return
+        }
+
         switch event {
         case .mouseMove(let dx, let dy):
             moveMouse(dx: dx, dy: dy)
 
         case .mouseClick(let btn):
-            let type = btn == .left ? CGMouseButton.left : CGMouseButton.right
-            clickMouse(button: type)
+            clickMouse(button: btn)
 
         case .mouseDown(let btn):
             postMouseButton(button: btn, down: true)
@@ -37,6 +41,7 @@ final class InputSimulator {
             postKey(code: code, down: false, flags: [])
 
         case .keyCombo(let modifiers, let code):
+            // 先按下 modifier 标志再发 keyDown，松开时也要带 modifier，模拟真实键盘行为
             postKey(code: code, down: true, flags: modifiers)
             postKey(code: code, down: false, flags: modifiers)
 
@@ -48,15 +53,10 @@ final class InputSimulator {
     // MARK: - Mouse
 
     private func currentCursor() -> CGPoint {
-        // NSEvent.mouseLocation is in AppKit (bottom-origin) coordinates; convert.
+        // NSEvent.mouseLocation 是 AppKit 坐标（左下原点），转成 CG 坐标（左上原点）
         let loc = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(loc) })
-                    ?? NSScreen.main else {
-            return CGPoint(x: loc.x, y: loc.y)
-        }
-        // Flip Y so we're in CG (top-origin) coordinates.
-        let y = screen.frame.maxY - loc.y
-        return CGPoint(x: loc.x, y: y)
+        let screenH = NSScreen.main?.frame.height ?? 800
+        return CGPoint(x: loc.x, y: screenH - loc.y)
     }
 
     private func moveMouse(dx: Double, dy: Double) {
@@ -64,31 +64,30 @@ final class InputSimulator {
         point.x += CGFloat(dx)
         point.y += CGFloat(dy)
 
-        // Clamp to the union of all screens so we can't push the cursor off-screen
-        // (which CG would silently refuse).
-        let unionFrame = NSScreen.screens.reduce(CGRect.zero) { acc, screen in
-            acc.union(screen.frame)
-        }
-        if !unionFrame.isEmpty {
-            let maxX = unionFrame.maxX - 1
-            let maxY = unionFrame.maxY - 1
-            point.x = min(max(point.x, unionFrame.minX), maxX)
-            point.y = min(max(point.y, unionFrame.minY), maxY)
+        // 夹在所有屏幕的联合区域内
+        let union = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }
+        // 注意：CGRect 里 y 还是 AppKit bottom-origin，这里 point.y 已经是 CG top-origin
+        // 简化处理：只夹 x
+        if !union.isNull {
+            point.x = max(0, min(point.x, union.maxX - 1))
+            // 对 y：CG top-origin，0 是顶部，maxH-1 是底部
+            let maxH = NSScreen.main?.frame.height ?? 800
+            point.y = max(0, min(point.y, maxH - 1))
         }
 
-        let type: CGEventType = leftButtonDown ? .leftMouseDragged : .mouseMoved
-        let button: CGMouseButton = leftButtonDown ? .left : .left // irrelevant for .mouseMoved
+        let eventType: CGEventType = leftButtonDown ? .leftMouseDragged : .mouseMoved
+        let mouseBtn: CGMouseButton = .left
         if let ev = CGEvent(mouseEventSource: nil,
-                            mouseType: type,
+                            mouseType: eventType,
                             mouseCursorPosition: point,
-                            mouseButton: button) {
+                            mouseButton: mouseBtn) {
             ev.post(tap: .cghidEventTap)
         }
     }
 
-    private func clickMouse(button: CGMouseButton) {
-        postMouseButton(button: button == .left ? .left : .right, down: true)
-        postMouseButton(button: button == .left ? .left : .right, down: false)
+    private func clickMouse(button: ControlEvent.MouseButton) {
+        postMouseButton(button: button, down: true)
+        postMouseButton(button: button, down: false)
     }
 
     private func postMouseButton(button: ControlEvent.MouseButton, down: Bool) {
@@ -96,9 +95,9 @@ final class InputSimulator {
         let cgButton: CGMouseButton = button == .left ? .left : .right
         let type: CGEventType
         switch (button, down) {
-        case (.left, true):  type = .leftMouseDown
-        case (.left, false): type = .leftMouseUp
-        case (.right, true): type = .rightMouseDown
+        case (.left, true):   type = .leftMouseDown
+        case (.left, false):  type = .leftMouseUp
+        case (.right, true):  type = .rightMouseDown
         case (.right, false): type = .rightMouseUp
         }
         if let ev = CGEvent(mouseEventSource: nil,
@@ -110,6 +109,7 @@ final class InputSimulator {
     }
 
     private func scrollWheel(dy: Int) {
+        // CGEvent scrollWheelEvent2Source: wheel1 正值 = 向上滚动
         if let ev = CGEvent(scrollWheelEvent2Source: nil,
                             units: .line,
                             wheelCount: 1,
@@ -124,13 +124,15 @@ final class InputSimulator {
 
     private func postKey(code: CGKeyCode, down: Bool, flags: CGEventFlags) {
         if let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) {
-            ev.flags = flags
+            if !flags.isEmpty {
+                ev.flags = flags
+            }
             ev.post(tap: .cghidEventTap)
         }
     }
 
-    /// Best-effort Unicode text injection by setting the key event's unicode string.
-    /// Works for plain text typing (including CJK characters) in most apps.
+    /// Unicode 文字注入 —— 通过 keyboardSetUnicodeString 绕过 keyCode 映射，
+    /// 支持任意 Unicode（含中文）。
     private func typeText(_ text: String) {
         let utf16 = Array(text.utf16)
         guard !utf16.isEmpty else { return }

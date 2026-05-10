@@ -1,5 +1,8 @@
 package com.lowremote.ui
 
+import android.os.Build
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lowremote.model.ControlEvent
@@ -27,9 +31,9 @@ import com.lowremote.model.MacKeyCodes
 
 /**
  * 快捷键区域 —— 仅快捷键按钮网格，无标题、无输入框。
+ * 点击按钮时触发震动反馈（VIRTUAL_KEY）。
  *
  * 布局：3 列均分，竖向可滚动（LazyColumn），充满父容器剩余高度。
- * 按钮高度由内容决定，行间距紧凑（4dp），适配手机小屏幕。
  */
 @Composable
 fun ShortcutKeyboard(
@@ -39,8 +43,8 @@ fun ShortcutKeyboard(
     val shortcuts = remember { buildShortcuts() }
     val rows = remember(shortcuts) { shortcuts.chunked(3) }
     val listState = rememberLazyListState()
+    val rootView = LocalView.current
 
-    // 竖向滚动条容器
     Box(
         modifier = modifier
             .background(Color(0xFF141414))
@@ -60,6 +64,7 @@ fun ShortcutKeyboard(
                         KeyButton(
                             label = sc.label,
                             modifier = Modifier.weight(1f),
+                            rootView = rootView,
                             onClick = { onEvent(sc.event) },
                         )
                     }
@@ -77,10 +82,19 @@ fun ShortcutKeyboard(
 private fun KeyButton(
     label: String,
     modifier: Modifier = Modifier,
+    rootView: View,
     onClick: () -> Unit,
 ) {
     Button(
-        onClick = onClick,
+        onClick = {
+            // 触发震动反馈
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                rootView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            } else {
+                rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            }
+            onClick()
+        },
         modifier = modifier.height(36.dp),
         shape = RoundedCornerShape(5.dp),
         colors = ButtonDefaults.buttonColors(

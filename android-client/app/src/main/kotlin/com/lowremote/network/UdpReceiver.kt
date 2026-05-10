@@ -2,10 +2,10 @@ package com.lowremote.network
 
 import android.util.Log
 import com.lowremote.model.Packet
-import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.io.IOException
 import kotlin.concurrent.thread
 
 /**
@@ -129,9 +129,11 @@ class UdpSender {
     fun send(bytes: ByteArray) {
         val sock = socket ?: return
         val addr = peerAddress ?: return
+        if (sock.isClosed) return
         try {
             sock.send(DatagramPacket(bytes, bytes.size, addr, peerPort))
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            // SocketException / IOException — socket closed or network error; ignore.
             Log.w(TAG, "send failed: ${e.message}")
         }
     }

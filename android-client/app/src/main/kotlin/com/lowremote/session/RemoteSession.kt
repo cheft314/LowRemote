@@ -155,7 +155,18 @@ class RemoteSession {
 
     fun sendEvent(event: ControlEvent) {
         if (_state.value != State.Connected) return
-        sender.sendEvent(event.serialize(), nextEventFrameId())
+        // Must NOT run on the main/UI thread — DatagramSocket.send() is a
+        // network call and Android will throw NetworkOnMainThreadException if
+        // invoked from the touch-event callback chain.
+        val serialized = event.serialize()
+        val frameId = nextEventFrameId()
+        scope.launch(Dispatchers.IO) {
+            try {
+                sender.sendEvent(serialized, frameId)
+            } catch (e: Exception) {
+                Log.w(TAG, "sendEvent failed: ${e.message}")
+            }
+        }
     }
 
     fun disconnect() {

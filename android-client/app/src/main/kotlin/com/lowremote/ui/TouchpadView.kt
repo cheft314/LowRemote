@@ -14,16 +14,19 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
- * Touchpad surface with a small built-in gesture state machine:
+ * 触控板 View —— 严格保持 16:10（1.6:1）宽高比。
  *
- *   • 1 finger move        → mouse move (delta)
- *   • 1 finger tap         → left click
- *   • 1 finger long-press  → left button down; subsequent move = drag; up on release
- *   • 2 fingers short tap  → right click
- *   • 2 fingers vertical   → scroll wheel
+ * 布局规则：
+ *   • 宽度由父容器给定（撑满右侧剩余宽度）
+ *   • 高度 = 宽度 ÷ 1.6，由 onMeasure 自动算出
+ *   → 不需要在 Compose 侧指定固定高度，Modifier.fillMaxWidth() 即可
  *
- * Coordinates sent use *delta* mode — the Mac accumulates onto the current
- * cursor position, which feels much more trackpad-like than absolute mapping.
+ * 手势识别：
+ *   • 1 指滑动   → 鼠标移动（delta 模式，sensitivity 系数）
+ *   • 1 指轻点   → 左键单击（< 200ms，位移 < 5dp）
+ *   • 1 指长按滑 → 拖拽（按下 500ms 后开始，松手结束）
+ *   • 2 指轻点   → 右键单击
+ *   • 2 指垂直滑 → 滚轮（每 16dp 一格，自然方向）
  */
 class TouchpadView @JvmOverloads constructor(
     context: Context,
@@ -34,56 +37,73 @@ class TouchpadView @JvmOverloads constructor(
         private const val TAP_MAX_MS = 200L
         private const val TAP_MAX_MOVE_DP = 5f
         private const val LONG_PRESS_MS = 500L
-        private const val SCROLL_ACCUMULATION_THRESHOLD_DP = 16f
+        private const val SCROLL_THRESHOLD_DP = 16f
+        /** 宽高比分子：16，分母：10 */
+        private const val ASPECT_W = 16
+        private const val ASPECT_H = 10
     }
 
+    /** 外部设置事件回调；由 RemoteSession.sendEvent 在 IO 线程派发，此处直接调用即可 */
     var onEvent: ((ControlEvent) -> Unit)? = null
 
-    /** Linear multiplier on raw touch deltas. Trackpads feel best at ~1.5–2.2. */
+    /** 触控灵敏度倍率 */
     var sensitivity: Float = 1.8f
 
-    private val densityPx: Float = context.resources.displayMetrics.density
-    private val tapMaxMovePx = TAP_MAX_MOVE_DP * densityPx
-    private val scrollThresholdPx = SCROLL_ACCUMULATION_THRESHOLD_DP * densityPx
+    private val dp = context.resources.displayMetrics.density
+    private val tapMaxMovePx = TAP_MAX_MOVE_DP * dp
+    private val scrollThresholdPx = SCROLL_THRESHOLD_DP * dp
 
-    // ---- Drawing ----
+    // ── 绘制 ──────────────────────────────────────────────────────────────
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.DKGRAY
+        color = Color.argb(60, 255, 255, 255)
         style = Paint.Style.STROKE
-        strokeWidth = 2f * densityPx
+        strokeWidth = 1.5f * dp
     }
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.GRAY
-        textSize = 14f * densityPx
+        color = Color.argb(40, 255, 255, 255)
+        textSize = 11f * dp
         textAlign = Paint.Align.CENTER
     }
 
-    override fun onDraw(canvas: Canvas) {
-        val inset = 4f * densityPx
-        canvas.drawRoundRect(
-            inset, inset, width - inset, height - inset,
-            8f * densityPx, 8f * densityPx,
-            borderPaint,
-        )
-        canvas.drawText("Touchpad", width / 2f, height / 2f, hintPaint)
+    // ── 测量 ──────────────────────────────────────────────────────────────
+    /**
+     * 宽度取父容器给的 exactly/at-most 值；
+     * 高度 = 宽度 × (10/16)，严格 16:10。
+     */
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val specW = MeasureSpec.getSize(widthMeasureSpec)
+        val w = if (specW > 0) specW else suggestedMinimumWidth.coerceAtLeast(1)
+        val h = w * ASPECT_H / ASPECT_W
+        setMeasuredDimension(w, h)
     }
 
-    // ---- Gesture state ----
+    override fun onDraw(canvas: Canvas) {
+        val inset = 4f * dp
+        canvas.drawRoundRect(
+            inset, inset, width - inset, height - inset,
+            8f * dp, 8f * dp,
+            borderPaint,
+        )
+        canvas.drawText(
+            "触控板  ✦  双指右键  ✦  双指滚动",
+            width / 2f,
+            height / 2f + hintPaint.textSize / 3f,
+            hintPaint,
+        )
+    }
+
+    // ── 手势状态 ──────────────────────────────────────────────────────────
     private var gestureStartTime = 0L
     private var pointer0StartX = 0f
     private var pointer0StartY = 0f
     private var lastX = 0f
     private var lastY = 0f
-    private var cumulativeMove = 0f
-
-    private var mode = Mode.None
     private var dragActive = false
     private var longPressFireTime = 0L
-
-    /** Accumulates 2-finger Y delta so we emit scroll ticks, not wheel noise. */
     private var scrollAccum = 0f
 
     private enum class Mode { None, Single, Two }
+    private var mode = Mode.None
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -95,7 +115,6 @@ class TouchpadView @JvmOverloads constructor(
                 pointer0StartY = event.y
                 lastX = event.x
                 lastY = event.y
-                cumulativeMove = 0f
                 dragActive = false
             }
 
@@ -103,24 +122,19 @@ class TouchpadView @JvmOverloads constructor(
                 if (event.pointerCount == 2) {
                     mode = Mode.Two
                     scrollAccum = 0f
-                    // Use pointer index 1 as the primary for delta tracking.
                     lastX = event.getX(1)
                     lastY = event.getY(1)
                 }
             }
 
-            MotionEvent.ACTION_MOVE -> {
-                when (mode) {
-                    Mode.Single -> handleSingleMove(event)
-                    Mode.Two -> handleTwoFingerMove(event)
-                    Mode.None -> {}
-                }
+            MotionEvent.ACTION_MOVE -> when (mode) {
+                Mode.Single -> handleSingleMove(event)
+                Mode.Two -> handleTwoFingerMove(event)
+                Mode.None -> Unit
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
                 if (event.pointerCount == 2) {
-                    // Second finger lifted. If we were in two-finger mode and
-                    // barely moved, treat as right-click.
                     if (mode == Mode.Two) {
                         val elapsed = SystemClock.uptimeMillis() - gestureStartTime
                         if (elapsed < TAP_MAX_MS && abs(scrollAccum) < scrollThresholdPx) {
@@ -128,11 +142,9 @@ class TouchpadView @JvmOverloads constructor(
                             performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                         }
                     }
-                    // Fall back to single-finger tracking, if the remaining
-                    // finger is still down.
-                    val remainingIdx = if (event.actionIndex == 0) 1 else 0
-                    lastX = event.getX(remainingIdx)
-                    lastY = event.getY(remainingIdx)
+                    val remainIdx = if (event.actionIndex == 0) 1 else 0
+                    lastX = event.getX(remainIdx)
+                    lastY = event.getY(remainIdx)
                     mode = Mode.Single
                 }
             }
@@ -171,10 +183,10 @@ class TouchpadView @JvmOverloads constructor(
         lastX = x
         lastY = y
 
-        // Kick off a drag when a long-press crosses the movement threshold.
+        // 长按超时后开始拖拽
         if (!dragActive &&
             SystemClock.uptimeMillis() >= longPressFireTime &&
-            hypot(x - pointer0StartX, y - pointer0StartY) < tapMaxMovePx * 2f
+            hypot(x - pointer0StartX, y - pointer0StartY) < tapMaxMovePx * 3f
         ) {
             dragActive = true
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -187,14 +199,12 @@ class TouchpadView @JvmOverloads constructor(
 
     private fun handleTwoFingerMove(event: MotionEvent) {
         if (event.pointerCount < 2) return
-        val x = event.getX(1)
         val y = event.getY(1)
         val dy = y - lastY
-        lastX = x
+        lastX = event.getX(1)
         lastY = y
         scrollAccum += dy
-        // One "wheel tick" per accumulated threshold; direction follows natural
-        // scrolling (finger up = content up = wheel up / positive value on Mac).
+        // 自然滚动：手指上划 → 内容向上 → wheel +1（Mac 正值=上滚）
         while (scrollAccum <= -scrollThresholdPx) {
             onEvent?.invoke(ControlEvent.MouseWheel(1))
             scrollAccum += scrollThresholdPx

@@ -6,18 +6,18 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 
 /**
- * SurfaceView that keeps a 16:10 aspect ratio inside whatever bounds Compose
- * gives us, letter/pillar-boxing the rest as black.
+ * 视频渲染 SurfaceView。
  *
- * Exposes a simple listener so [RemoteSession] can swap in the current
- * Android `Surface` as the decoder's render target.
+ * 不做任何比例裁剪 —— 父容器（BoxWithConstraints）已经把宽度算成了
+ * screenHeight × 1.6，直接撑满即可。MediaCodec 会把帧缩放到 Surface 尺寸。
+ *
+ * [targetAspectWidth] / [targetAspectHeight] 保留供将来扩展，目前不影响测量。
  */
 class VideoSurfaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
-    /** Aspect ratio target. Kept configurable so we can adapt to the Mac's real screen ratio later. */
     var targetAspectWidth: Int = 16
     var targetAspectHeight: Int = 10
 
@@ -28,34 +28,15 @@ class VideoSurfaceView @JvmOverloads constructor(
         holder.addCallback(this)
     }
 
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val availW = MeasureSpec.getSize(widthMeasureSpec)
-        val availH = MeasureSpec.getSize(heightMeasureSpec)
-        if (availW <= 0 || availH <= 0) {
-            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-            return
-        }
-
-        val targetW: Int
-        val targetH: Int
-        if (availW * targetAspectHeight > availH * targetAspectWidth) {
-            // Space is wider than target ratio → pillar-box.
-            targetH = availH
-            targetW = availH * targetAspectWidth / targetAspectHeight
-        } else {
-            // Space is taller than target ratio → letter-box.
-            targetW = availW
-            targetH = availW * targetAspectHeight / targetAspectWidth
-        }
-        setMeasuredDimension(targetW, targetH)
-    }
+    // 不覆盖 onMeasure —— 让 Compose Modifier.fillMaxSize() 完全控制尺寸，
+    // 这样 SurfaceView 就是父容器的精确大小，不做额外裁剪。
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         onSurfaceReady?.invoke(holder.surface)
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        // Nothing — decoder will scale to fit.
+        // MediaCodec 的输出会自动缩放到新的 Surface 尺寸，无需额外处理。
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {

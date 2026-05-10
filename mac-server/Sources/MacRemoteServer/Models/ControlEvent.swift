@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Parsed control event received over UDP.
 ///

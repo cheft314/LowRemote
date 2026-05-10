@@ -85,7 +85,7 @@ final class ScreenCaptureManager {
     private static func makePixelBuffer(from surface: IOSurfaceRef,
                                         width: Int,
                                         height: Int) -> CVPixelBuffer? {
-        var pixelBufferOut: CVPixelBuffer?
+        var pixelBufferOut: Unmanaged<CVPixelBuffer>?
         let attrs: [CFString: Any] = [
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
         ]
@@ -99,6 +99,6 @@ final class ScreenCaptureManager {
             NSLog("[Capture] CVPixelBufferCreateWithIOSurface failed: \(status)")
             return nil
         }
-        return pixelBufferOut
+        return pixelBufferOut?.takeRetainedValue()
     }
 }

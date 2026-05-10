@@ -59,7 +59,7 @@ final class VideoEncoder {
 
     func stop() {
         if let session = session {
-            VTCompressionSessionCompleteFrames(session, until: .invalid)
+            VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
             VTCompressionSessionInvalidate(session)
         }
         session = nil

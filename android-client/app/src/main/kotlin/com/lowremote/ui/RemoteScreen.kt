@@ -1,35 +1,20 @@
 package com.lowremote.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -39,118 +24,162 @@ import com.lowremote.model.ControlEvent
 import com.lowremote.session.RemoteSession
 
 /**
- * 主控制界面 — 无顶部 Header，全屏充分利用每一像素。
+ * 主控制界面 — 零 Header 全屏，充分利用挖孔屏每一像素。
  *
- * 布局规则：
- *   ┌──────────────────────────┬──────────────────┐
- *   │  SurfaceView             │  ShortcutKeyboard│
- *   │  高度 = 全屏高度          │  (剩余高度 - 触控)│
- *   │  宽度 = 高度 × 1.6       ├──────────────────┤
- *   │  (Mac 16:10 比例)        │  TouchpadView    │
- *   │                          │  宽 = 右侧满宽   │
- *   │                          │  高 = 宽 ÷ 1.6   │
- *   └──────────────────────────┴──────────────────┘
+ * 布局（横屏）：
  *
- * 按返回键弹出半透明菜单（FPS 切换、断开、状态信息）。
+ *   ┌──────────────────────────────┬────────────────────┐
+ *   │  VideoTouchView              │  ShortcutKeyboard  │
+ *   │  高 = 全屏高（含挖孔区）      │  (剩余高度)         │
+ *   │  宽 = 高 × 1.6               ├────────────────────┤
+ *   │                              │  TouchpadView      │
+ *   │  [触屏/触控板 可切换]         │  宽满, 高=宽÷1.6   │
+ *   └──────────────────────────────┴────────────────────┘
+ *
+ * 横向反转：将 Row 的 LayoutDirection 翻转，视频在右、控制面板在左。
+ * 挖孔屏：fillMaxSize() + LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES（在 MainActivity 设置），
+ *   视频区故意绘制到挖孔区域（挖孔在视频里几乎不可察），控制区不会被遮挡（挖孔在屏幕另一侧）。
+ *
+ * 返回键 → 弹出半透明菜单，包含：
+ *   • 连接状态 / 分辨率
+ *   • FPS 切换
+ *   • 视频区模式切换（触屏 / 触控板）
+ *   • 横向反转开关
+ *   • 断开按钮
  */
 @Composable
 fun RemoteScreen(
     session: RemoteSession,
     onDisconnect: () -> Unit,
 ) {
-    val fps by session.fps.collectAsState()
+    val fps        by session.fps.collectAsState()
     val resolution by session.remoteResolution.collectAsState()
-    val state by session.state.collectAsState()
+    val state      by session.state.collectAsState()
 
-    // 控制菜单显示
-    var showMenu by remember { mutableStateOf(false) }
+    // ── Persistent UI preferences (survive recomposition) ────────────────────
+    var showMenu        by remember { mutableStateOf(false) }
+    var mirrorLayout    by remember { mutableStateOf(false) }   // horizontal flip
+    var videoTouchscreen by remember { mutableStateOf(true) }   // touchscreen vs trackpad
 
-    // 返回键 → 弹出菜单而非直接退出
     BackHandler { showMenu = true }
+
+    // Keep a stable reference to VideoTouchView so we can update its mode.
+    val videoViewRef = remember { mutableStateOf<VideoTouchView?>(null) }
+    LaunchedEffect(videoTouchscreen) {
+        videoViewRef.value?.touchscreenMode = videoTouchscreen
+    }
+
+    // Mirror the entire Row by reversing LayoutDirection
+    val layoutDir = if (mirrorLayout) LayoutDirection.Rtl else LayoutDirection.Ltr
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            // Consume ALL insets: draw under status-bar, nav-bar, and cutout
+            .windowInsetsPadding(WindowInsets(0, 0, 0, 0)),
     ) {
-        // constraints 里是像素值，用 LocalDensity 转成 Dp
-        val density = LocalDensity.current
+        val density   = LocalDensity.current
         val screenHDp = with(density) { constraints.maxHeight.toDp() }
         val screenWDp = with(density) { constraints.maxWidth.toDp() }
 
-        // 视频区宽度 = 全屏高度 × 1.6，超出屏幕宽度时夹住
-        val videoWDp = (screenHDp * 1.6f).coerceAtMost(screenWDp)
-        val rightWDp = screenWDp - videoWDp
+        // Left column: video — height fills screen, width = height × 1.6
+        val videoWDp  = (screenHDp * 1.6f).coerceAtMost(screenWDp)
+        val rightWDp  = screenWDp - videoWDp
 
-        Row(modifier = Modifier.fillMaxSize()) {
-            // ── 左侧：视频区 ──────────────────────────────────────
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(videoWDp)
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center,
-            ) {
-                AndroidView(
-                    factory = { ctx ->
-                        VideoSurfaceView(ctx).also { v ->
-                            resolution?.let { (w, h) ->
-                                v.targetAspectWidth = w
-                                v.targetAspectHeight = h
-                            }
-                            v.onSurfaceReady = { surface -> session.setSurface(surface) }
-                            v.onSurfaceDestroyed = { session.setSurface(null) }
-                        }
-                    },
-                    update = { v ->
-                        resolution?.let { (w, h) ->
-                            if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
-                                v.targetAspectWidth = w
-                                v.targetAspectHeight = h
-                                v.requestLayout()
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+        CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
+            Row(modifier = Modifier.fillMaxSize()) {
 
-            // ── 右侧：控制区（剩余宽度） ──────────────────────────
-            Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(rightWDp)
-                    .background(Color(0xFF111111)),
-            ) {
-                // 快捷键区：撑满剩余高度（Column weight=1）
-                ShortcutKeyboard(
+                // ── Video area ────────────────────────────────────────────────
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    onEvent = { ev -> session.sendEvent(ev) },
-                )
+                        .fillMaxHeight()
+                        .width(videoWDp)
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoTouchView(ctx).also { v ->
+                                videoViewRef.value = v
+                                v.touchscreenMode = videoTouchscreen
+                                resolution?.let { (w, h) ->
+                                    v.targetAspectWidth  = w
+                                    v.targetAspectHeight = h
+                                }
+                                v.onSurfaceReady    = { s -> session.setSurface(s) }
+                                v.onSurfaceDestroyed = { session.setSurface(null) }
+                                v.onEvent = { ev -> session.sendEvent(ev) }
+                            }
+                        },
+                        update = { v ->
+                            v.touchscreenMode = videoTouchscreen
+                            resolution?.let { (w, h) ->
+                                if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
+                                    v.targetAspectWidth  = w
+                                    v.targetAspectHeight = h
+                                    v.requestLayout()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
 
-                // 触控板：宽度由 fillMaxWidth 给定，
-                // 高度由 TouchpadView.onMeasure 按 16:10 自动计算
-                AndroidView(
-                    factory = { ctx ->
-                        TouchpadView(ctx).apply {
-                            setBackgroundColor(0xFF1A1A1A.toInt())
-                            onEvent = { ev: ControlEvent -> session.sendEvent(ev) }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    // Touch-mode indicator badge (top corner)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .background(
+                                color = if (videoTouchscreen) Color(0x884A90E2) else Color(0x88333333),
+                                shape = RoundedCornerShape(4.dp),
+                            )
+                            .clickable { videoTouchscreen = !videoTouchscreen }
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = if (videoTouchscreen) "触屏" else "触控板",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                        )
+                    }
+                }
+
+                // ── Right control panel ───────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(rightWDp)
+                        .background(Color(0xFF111111)),
+                ) {
+                    ShortcutKeyboard(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        onEvent  = { ev -> session.sendEvent(ev) },
+                    )
+                    AndroidView(
+                        factory = { ctx ->
+                            TouchpadView(ctx).apply {
+                                setBackgroundColor(0xFF1A1A1A.toInt())
+                                onEvent = { ev: ControlEvent -> session.sendEvent(ev) }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
 
-        // ── 菜单弹层（返回键触发）────────────────────────────────
+        // ── Back-key menu overlay ─────────────────────────────────────────────
         if (showMenu) {
             SessionMenuDialog(
-                fps = fps,
-                state = state,
-                resolution = resolution,
-                onChangeFps = { session.changeFps(it) },
+                fps              = fps,
+                state            = state,
+                resolution       = resolution,
+                mirrorLayout     = mirrorLayout,
+                videoTouchscreen = videoTouchscreen,
+                onChangeFps      = { session.changeFps(it) },
+                onToggleMirror   = { mirrorLayout = it },
+                onToggleVideoMode = { videoTouchscreen = it },
                 onDisconnect = {
                     showMenu = false
                     onDisconnect()
@@ -162,7 +191,7 @@ fun RemoteScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 返回键菜单弹窗
+// 菜单弹窗（返回键触发）
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -170,7 +199,11 @@ private fun SessionMenuDialog(
     fps: Int,
     state: RemoteSession.State,
     resolution: Pair<Int, Int>?,
+    mirrorLayout: Boolean,
+    videoTouchscreen: Boolean,
     onChangeFps: (Int) -> Unit,
+    onToggleMirror: (Boolean) -> Unit,
+    onToggleVideoMode: (Boolean) -> Unit,
     onDisconnect: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -178,7 +211,6 @@ private fun SessionMenuDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        // 半透明遮罩，点击遮罩关闭
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -186,89 +218,139 @@ private fun SessionMenuDialog(
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
-            // 菜单卡片，阻止点击穿透
             Column(
                 modifier = Modifier
-                    .width(260.dp)
-                    .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                    .width(280.dp)
+                    .background(Color(0xFF1E1E1E), RoundedCornerShape(14.dp))
                     .clickable { /* consume */ }
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // 状态信息
-                val statusText = when (state) {
-                    RemoteSession.State.Connected -> "● 已连接"
-                    RemoteSession.State.Connecting -> "○ 连接中…"
-                    else -> "○ 未连接"
-                }
+                // ── Status ────────────────────────────────────────────────────
                 Text(
-                    statusText,
-                    color = if (state == RemoteSession.State.Connected) Color(0xFF4CAF50)
-                    else Color(0xFFB0B0B0),
+                    text = if (state == RemoteSession.State.Connected) "● 已连接" else "○ 未连接",
+                    color = if (state == RemoteSession.State.Connected) Color(0xFF4CAF50) else Color(0xFFB0B0B0),
                     fontSize = 14.sp,
                 )
-
                 resolution?.let { (w, h) ->
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "${w}×${h}",
-                        color = Color(0xFF888888),
-                        fontSize = 12.sp,
-                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text("${w}×${h}", color = Color(0xFF666666), fontSize = 11.sp)
                 }
 
                 Spacer(Modifier.height(16.dp))
-                Divider(color = Color(0xFF333333))
-                Spacer(Modifier.height(16.dp))
+                Divider(color = Color(0xFF2D2D2D))
+                Spacer(Modifier.height(14.dp))
 
-                // FPS 选择
-                Text("帧率", color = Color(0xFFB0B0B0), fontSize = 13.sp)
+                // ── FPS ───────────────────────────────────────────────────────
+                MenuSectionLabel("帧率")
                 Spacer(Modifier.height(8.dp))
-                Row {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(30, 60, 120).forEach { f ->
-                        Button(
-                            onClick = {
-                                onChangeFps(f)
-                                onDismiss()
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (f == fps) Color(0xFF4A90E2) else Color(0xFF2D2D2D),
-                                contentColor = Color.White,
-                            ),
-                            shape = RoundedCornerShape(6.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                        ) {
-                            Text("${f}fps", fontSize = 12.sp)
-                        }
+                        ToggleButton(
+                            label = "${f}fps",
+                            active = f == fps,
+                            onClick = { onChangeFps(f); onDismiss() },
+                        )
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
-                Divider(color = Color(0xFF333333))
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
+                Divider(color = Color(0xFF2D2D2D))
+                Spacer(Modifier.height(14.dp))
 
-                // 断开按钮
+                // ── Video touch mode ──────────────────────────────────────────
+                MenuSectionLabel("视频区操作模式")
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ToggleButton(
+                        label  = "触屏模式",
+                        active = videoTouchscreen,
+                        onClick = { onToggleVideoMode(true) },
+                    )
+                    ToggleButton(
+                        label  = "触控板模式",
+                        active = !videoTouchscreen,
+                        onClick = { onToggleVideoMode(false) },
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (videoTouchscreen)
+                        "点哪跳哪·单指轻点单击·长按右键·双指滚动"
+                    else
+                        "超大触控板·delta移动·双指滚动/捏合·三指手势",
+                    color  = Color(0xFF666666),
+                    fontSize = 10.sp,
+                )
+
+                Spacer(Modifier.height(14.dp))
+                Divider(color = Color(0xFF2D2D2D))
+                Spacer(Modifier.height(14.dp))
+
+                // ── Mirror / flip ────────────────────────────────────────────
+                MenuSectionLabel("布局")
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("横向反转（控制区在左）", color = Color(0xFFB0B0B0), fontSize = 13.sp)
+                    Switch(
+                        checked = mirrorLayout,
+                        onCheckedChange = onToggleMirror,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor    = Color.White,
+                            checkedTrackColor    = Color(0xFF4A90E2),
+                            uncheckedTrackColor  = Color(0xFF333333),
+                        ),
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Divider(color = Color(0xFF2D2D2D))
+                Spacer(Modifier.height(14.dp))
+
+                // ── Disconnect ────────────────────────────────────────────────
                 Button(
                     onClick = onDisconnect,
-                    colors = ButtonDefaults.buttonColors(
+                    colors  = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFFB23A48),
-                        contentColor = Color.White,
+                        contentColor   = Color.White,
                     ),
-                    shape = RoundedCornerShape(8.dp),
+                    shape    = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("断开连接", fontSize = 14.sp)
                 }
 
-                Spacer(Modifier.height(8.dp))
-
-                Text(
-                    "点击空白处关闭",
-                    color = Color(0xFF555555),
-                    fontSize = 11.sp,
-                )
+                Spacer(Modifier.height(10.dp))
+                Text("点击空白处关闭", color = Color(0xFF444444), fontSize = 10.sp)
             }
         }
+    }
+}
+
+// ── Small reusable composables ────────────────────────────────────────────────
+
+@Composable
+private fun MenuSectionLabel(text: String) {
+    Text(text, color = Color(0xFF888888), fontSize = 11.sp,
+        modifier = Modifier.fillMaxWidth())
+}
+
+@Composable
+private fun ToggleButton(label: String, active: Boolean, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        targetValue = if (active) Color(0xFF4A90E2) else Color(0xFF2D2D2D),
+        label = "toggle_bg",
+    )
+    Button(
+        onClick  = onClick,
+        colors   = ButtonDefaults.buttonColors(containerColor = bg, contentColor = Color.White),
+        shape    = RoundedCornerShape(6.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(label, fontSize = 12.sp)
     }
 }

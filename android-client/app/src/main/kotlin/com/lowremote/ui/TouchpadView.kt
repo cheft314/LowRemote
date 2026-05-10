@@ -301,20 +301,45 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     // ── Tap logic ─────────────────────────────────────────────────────────────
+    //
+    // Real Mac trackpad behaviour:
+    //   1 tap  → click  (clickCount=1)   normal press
+    //   2 taps → double (clickCount=2)   select word
+    //   3 taps → triple (clickCount=3)   select line / paragraph
+    //
+    // We track the last TWO taps to distinguish all three cases.
+    private var prevTapTime = 0L   // tap before lastTapTime
+    private var prevTapX    = 0f
+    private var prevTapY    = 0f
+
     private fun fireTap() {
         val now       = SystemClock.uptimeMillis()
-        val gapToLast = now - lastTapTime
-        val nearLast  = hypot(sfStartX - lastTapX, sfStartY - lastTapY) < tapMovePx * 3f
+        val gap1      = now - lastTapTime            // gap to most-recent tap
+        val gap2      = now - prevTapTime            // gap to second-most-recent tap
+        val near1     = hypot(sfStartX - lastTapX, sfStartY - lastTapY) < tapMovePx * 3f
+        val near2     = hypot(sfStartX - prevTapX,  sfStartY - prevTapY)  < tapMovePx * 3f
 
-        if (gapToLast < DOUBLE_TAP_MS && nearLast) {
-            // Real double-click: Mac needs clickCount=2, not two separate MC events.
-            onEvent?.invoke(ControlEvent.MouseDoubleClick(ControlEvent.Button.LEFT))
-            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
-            lastTapTime = 0L // reset so next tap doesn't triple-click
-        } else {
-            onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
-            lastTapTime = now; lastTapX = sfStartX; lastTapY = sfStartY
+        when {
+            // Triple-click: all three taps within DOUBLE_TAP_MS of each other
+            gap1 < DOUBLE_TAP_MS && near1 && gap2 < DOUBLE_TAP_MS * 2 && near2 && lastTapTime > 0L && prevTapTime > 0L -> {
+                onEvent?.invoke(ControlEvent.MouseTripleClick(ControlEvent.Button.LEFT))
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                prevTapTime = 0L; lastTapTime = 0L   // reset chain
+            }
+            // Double-click: within DOUBLE_TAP_MS of last tap
+            gap1 < DOUBLE_TAP_MS && near1 && lastTapTime > 0L -> {
+                onEvent?.invoke(ControlEvent.MouseDoubleClick(ControlEvent.Button.LEFT))
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                prevTapTime = lastTapTime; prevTapX = lastTapX; prevTapY = lastTapY
+                lastTapTime = now; lastTapX = sfStartX; lastTapY = sfStartY
+            }
+            // Single-click
+            else -> {
+                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                prevTapTime = lastTapTime; prevTapX = lastTapX; prevTapY = lastTapY
+                lastTapTime = now; lastTapX = sfStartX; lastTapY = sfStartY
+            }
         }
     }
 

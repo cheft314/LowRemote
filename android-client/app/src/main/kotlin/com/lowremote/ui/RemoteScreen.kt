@@ -116,6 +116,7 @@ fun RemoteScreen(
                                     v.onSurfaceReady    = { s -> session.setSurface(s) }
                                     v.onSurfaceDestroyed = { session.setSurface(null) }
                                     v.onEvent = { ev -> session.sendEvent(ev) }
+                                    v.onFirstTouch = { drawerOpen = false }
                                 }
                             },
                             update = { v ->

@@ -12,11 +12,17 @@ final class InputSimulator {
     private var leftButtonDown = false
 
     // Cache the last known cursor position for absolute-mode moves.
-    // We read it via NSEvent.mouseLocation (AppKit bottom-origin → converted).
+    // We read it via NSEvent.mouseLocation (AppKit bottom-left origin) and
+    // convert to CG coordinates (top-left origin, Y increases downward).
+    //
+    // The flip formula is: CG_y = primaryScreenHeight - AppKit_y
+    // where primaryScreenHeight = CGDisplayBounds(CGMainDisplayID()).height.
+    // This is the ONLY correct value to use — NSScreen.main can change when
+    // the user moves the menu bar to a secondary display, causing wrong Y.
     private func currentCursorCG() -> CGPoint {
         let loc = NSEvent.mouseLocation
-        let h   = NSScreen.main?.frame.height ?? 800
-        return CGPoint(x: loc.x, y: h - loc.y)
+        let primaryH = CGDisplayBounds(CGMainDisplayID()).height
+        return CGPoint(x: loc.x, y: primaryH - loc.y)
     }
 
     /// Display ID currently being streamed — set by AppDelegate when stream starts
@@ -39,6 +45,9 @@ final class InputSimulator {
 
         case .mouseDoubleClick(let btn):
             doubleClickMouse(button: btn)
+
+        case .mouseTripleClick(let btn):
+            tripleClickMouse(button: btn)
 
         case .mouseDown(let btn):
             setMouseButton(button: btn, down: true)
@@ -100,13 +109,17 @@ final class InputSimulator {
     // MARK: - Mouse helpers
 
     private func clampToScreen(_ p: CGPoint) -> CGPoint {
-        // Clamp to the bounds of the currently-streamed display so that
-        // touch/touchpad events from the phone land on the correct screen.
-        let bounds = CGDisplayBounds(activeDisplayID)
-        guard !bounds.isNull, !bounds.isInfinite else { return p }
+        // Clamp to the bounds of the currently-streamed display.
+        // CGDisplayBounds uses the CG global coordinate system:
+        //   • Primary display: origin (0,0) at top-left, Y increases downward
+        //   • Secondary display to the right: minX = primaryW, minY = 0
+        //   • Secondary display below:        minX = 0,       minY = primaryH
+        // So clamping to (minX…maxX-1, minY…maxY-1) is always correct.
+        let b = CGDisplayBounds(activeDisplayID)
+        guard !b.isNull, !b.isInfinite, b.width > 0, b.height > 0 else { return p }
         return CGPoint(
-            x: max(bounds.minX, min(p.x, bounds.maxX - 1)),
-            y: max(bounds.minY, min(p.y, bounds.maxY - 1))
+            x: max(b.minX, min(p.x, b.maxX - 1)),
+            y: max(b.minY, min(p.y, b.maxY - 1))
         )
     }
 
@@ -148,6 +161,16 @@ final class InputSimulator {
         setMouseButton(button: button, down: false, clickCount: 1)
         setMouseButton(button: button, down: true,  clickCount: 2)
         setMouseButton(button: button, down: false, clickCount: 2)
+    }
+
+    private func tripleClickMouse(button: ControlEvent.MouseButton) {
+        // clickCount=3 selects a full line in most macOS text editors.
+        setMouseButton(button: button, down: true,  clickCount: 1)
+        setMouseButton(button: button, down: false, clickCount: 1)
+        setMouseButton(button: button, down: true,  clickCount: 2)
+        setMouseButton(button: button, down: false, clickCount: 2)
+        setMouseButton(button: button, down: true,  clickCount: 3)
+        setMouseButton(button: button, down: false, clickCount: 3)
     }
 
     private func setMouseButton(button: ControlEvent.MouseButton, down: Bool,

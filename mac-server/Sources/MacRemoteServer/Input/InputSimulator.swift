@@ -61,6 +61,11 @@ final class InputSimulator {
         case .mouseWheelH(let dx):
             scrollWheel(wheel1: 0, wheel2: Int32(dx))
 
+        case .scrollPixels(let x, let y):
+            // Direct pixel scroll — no multiplier needed, value already scaled on Android.
+            // wheel1 > 0 = scroll UP; x/y follow the same sign convention.
+            scrollPixels(x: Int32(x), y: Int32(y))
+
         // ── Gestures ───────────────────────────────────────────────────────
         case .magnify(let scale):
             postMagnify(scale: scale)
@@ -204,6 +209,18 @@ final class InputSimulator {
                 wheelCount: 2,
                 wheel1: wheel1 * pixelMultiplier,
                 wheel2: wheel2 * pixelMultiplier,
+                wheel3: 0)?.post(tap: .cghidEventTap)
+    }
+
+    private func scrollPixels(x: Int32, y: Int32) {
+        // Pixel-accurate scroll from TouchpadView's velocity-proportional calculation.
+        // wheel1 = vertical (positive = scroll UP content)
+        // wheel2 = horizontal (positive = scroll LEFT content)
+        CGEvent(scrollWheelEvent2Source: nil,
+                units: .pixel,
+                wheelCount: 2,
+                wheel1: y,
+                wheel2: x,
                 wheel3: 0)?.post(tap: .cghidEventTap)
     }
 

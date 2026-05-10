@@ -53,20 +53,27 @@ class TouchpadView @JvmOverloads constructor(
         private const val DOUBLE_TAP_MS     = 380L   // max gap between two taps
         private const val TAP_MOVE_DP       = 8f
         private const val LONG_PRESS_MS     = 450L
-        private const val SCROLL_TICK_DP    = 10f    // px per scroll tick (smaller = faster)
         private const val PINCH_MIN_DELTA   = 0.004f
         // Multi-finger gesture: trigger after only 18dp displacement (was 40dp — too high)
         private const val MF_SWIPE_DP       = 18f
+
+        // ── Scroll tuning ──────────────────────────────────────────────────────
+        // Mac CGEvent uses .pixel units; each tick sent is SCROLL_PX pixels.
+        // Velocity-proportional: fast swipe → larger pixel value per event.
+        // Min speed = 1 dp/frame → MIN_SCROLL_PX;  Max = MAX_DP_PER_EVENT → MAX_SCROLL_PX.
+        private const val SCROLL_PX_PER_DP = 4.5f   // pixel amplification
+        private const val MIN_SCROLL_PX    = 4        // minimum pixels per event
+        private const val MAX_SCROLL_PX    = 120      // cap to prevent runaway
     }
 
     var onEvent: ((ControlEvent) -> Unit)? = null
-    var sensitivity: Float = 2.0f
+    var sensitivity: Float = 1.2f   // reduced from 2.0 — smoother cursor feel
     /** When true, long-press + drag = drag.  When false, all single-finger moves are plain moves. */
     var dragLockEnabled: Boolean = false
 
     private val dp             = context.resources.displayMetrics.density
     private val tapMovePx      = TAP_MOVE_DP  * dp
-    private val scrollTickPx   = SCROLL_TICK_DP * dp
+    private val scrollTickPx   = 1f  // not used for scroll any more — kept for compile compat
     private val mfSwipePx      = MF_SWIPE_DP * dp
 
     // ── Drawing ───────────────────────────────────────────────────────────────
@@ -236,18 +243,40 @@ class TouchpadView @JvmOverloads constructor(
 
         if (tfMode == TwoMode.UNDECIDED) {
             tfTotalMove += hypot(dMidX, dMidY)
-            if (tfTotalMove > scrollTickPx * 0.8f)  tfMode = TwoMode.SCROLL
-            else if (abs(dSpan) > scrollTickPx * 0.4f) tfMode = TwoMode.PINCH_ROTATE
+            // Use a smaller threshold (4 dp) so scroll mode engages quickly
+            val scrollThreshold = 4f * dp
+            if (tfTotalMove > scrollThreshold) {
+                tfMode = if (abs(dSpan) > tfTotalMove * 0.4f) TwoMode.PINCH_ROTATE
+                         else TwoMode.SCROLL
+            }
         }
 
         when (tfMode) {
             TwoMode.SCROLL -> {
-                // Natural scroll: finger down → content down → wheel -1
-                tfScrollX += dMidX; tfScrollY += dMidY
-                while (tfScrollY >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(-1)); tfScrollY -= scrollTickPx }
-                while (tfScrollY <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(+1)); tfScrollY += scrollTickPx }
-                while (tfScrollX >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(-1)); tfScrollX -= scrollTickPx }
-                while (tfScrollX <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(+1)); tfScrollX += scrollTickPx }
+                // ── Velocity-proportional natural scroll ───────────────────────
+                // "Natural scroll": finger moves DOWN → content moves DOWN.
+                // On Mac: wheel1 > 0 = scroll UP, wheel1 < 0 = scroll DOWN.
+                // So finger down (dMidY > 0) → wheel1 < 0  (content down).
+                // Invert dMidY to get the direction the wheel needs to go,
+                // then scale by dp density to get a pixel magnitude.
+                //
+                // We do NOT use accumulator+threshold ticks; instead we
+                // compute the pixel value directly from the finger delta and
+                // pass it to the Mac CGEvent (which accepts pixel units).
+                // This gives smooth, velocity-proportional scrolling.
+                val scrollPxY = dMidY * SCROLL_PX_PER_DP   // positive = finger down = content down
+                val scrollPxX = dMidX * SCROLL_PX_PER_DP
+
+                if (kotlin.math.abs(scrollPxY) >= 0.5f || kotlin.math.abs(scrollPxX) >= 0.5f) {
+                    val pyI = scrollPxY.toInt().let { if (it == 0 && scrollPxY > 0) 1 else if (it == 0 && scrollPxY < 0) -1 else it }
+                        .coerceIn(-MAX_SCROLL_PX, MAX_SCROLL_PX)
+                    val pxI = scrollPxX.toInt().let { if (it == 0 && scrollPxX > 0) 1 else if (it == 0 && scrollPxX < 0) -1 else it }
+                        .coerceIn(-MAX_SCROLL_PX, MAX_SCROLL_PX)
+                    // Emit as pixel-valued wheel events.
+                    // wheel1: vertical — negative = scroll down (natural: finger down → content down)
+                    if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, -pyI))
+                    if (pxI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(-pxI, 0))
+                }
             }
             TwoMode.PINCH_ROTATE -> {
                 if (curSpan > 0 && abs(dSpan) > PINCH_MIN_DELTA * dp) {

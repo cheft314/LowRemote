@@ -57,7 +57,6 @@ class VideoTouchView @JvmOverloads constructor(
     // ── Constants ─────────────────────────────────────────────────────────────
     private val dp           = context.resources.displayMetrics.density
     private val tapMovePx    = 10f * dp
-    private val scrollTickPx = 12f * dp
     private val mfSwipePx    = 18f * dp
     private val TAP_MS       = 240L
     private val DBLCLICK_MS  = 380L
@@ -199,12 +198,18 @@ class VideoTouchView @JvmOverloads constructor(
         val my = (ev.getY(0) + ev.getY(1)) / 2f
         val dX = mx - tfMidX; val dY = my - tfMidY
         tfMidX = mx; tfMidY = my
+
+        // Velocity-proportional natural scroll — same logic as TouchpadView.
+        // Natural: finger down (dY > 0) → content moves down → wheel1 < 0.
+        val SCALE = 4.5f
+        val MAX   = 120
+        val pyI = (-dY * SCALE).toInt().coerceIn(-MAX, MAX)
+        val pxI = (-dX * SCALE).toInt().coerceIn(-MAX, MAX)
+        if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, pyI))
+        if (pxI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(pxI, 0))
+
+        // Keep legacy accumulators so evalTwoFingerTap still works
         tfScrollX += dX; tfScrollY += dY
-        // Natural scroll (fixed): finger down → dY > 0 → content down → wheel -1
-        while (tfScrollY >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(-1)); tfScrollY -= scrollTickPx }
-        while (tfScrollY <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(+1)); tfScrollY += scrollTickPx }
-        while (tfScrollX >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(-1)); tfScrollX -= scrollTickPx }
-        while (tfScrollX <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(+1)); tfScrollX += scrollTickPx }
     }
 
     // ── Multi-finger (3/4) ────────────────────────────────────────────────────

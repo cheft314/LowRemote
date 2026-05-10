@@ -6,12 +6,21 @@ import android.media.AudioTrack
 import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Plays raw PCM audio received from the Mac server.
  *
- * Format: 48 000 Hz · stereo · Float32 interleaved · little-endian.
- * Matches [AudioCaptureManager] on the Mac side.
+ * Format: 16 000 Hz · mono · Int16 little-endian.
+ * Matches the simplified AudioCaptureManager format on the Mac side.
+ *
+ * Architecture: a dedicated AudioTrack thread drains a bounded queue,
+ * while [write] enqueues chunks from the UDP receive thread.
+ * This decouples UDP jitter from the audio output clock and avoids the
+ * "滋滋滋" noise caused by intermittent silence gaps when using
+ * WRITE_NON_BLOCKING (which drops frames when the AudioTrack buffer is full
+ * or when the caller arrives late).
  *
  * Usage:
  *   val player = AudioPlayer()
@@ -23,17 +32,27 @@ class AudioPlayer {
 
     companion object {
         private const val TAG         = "AudioPlayer"
-        private const val SAMPLE_RATE = 48_000
-        private const val CHANNELS    = AudioFormat.CHANNEL_OUT_STEREO
-        private const val ENCODING    = AudioFormat.ENCODING_PCM_FLOAT
+        private const val SAMPLE_RATE = 16_000          // matches Mac capture
+        private const val CHANNELS    = AudioFormat.CHANNEL_OUT_MONO
+        private const val ENCODING    = AudioFormat.ENCODING_PCM_16BIT
+
+        // Queue capacity in chunks.  Each 20-ms chunk = 640 bytes.
+        // 50 chunks = 1 second; acts as a jitter buffer without adding
+        // noticeable latency under normal Wi-Fi conditions.
+        private const val QUEUE_CAPACITY = 50
     }
 
-    private var track: AudioTrack? = null
+    private var track:       AudioTrack? = null
+    private var playThread:  Thread?     = null
+    private val running      = AtomicBoolean(false)
+    private val queue        = LinkedBlockingQueue<ByteArray>(QUEUE_CAPACITY)
 
     fun start() {
         stop()
+
         val minBuf  = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNELS, ENCODING)
-        val bufSize = maxOf(minBuf * 4, 65536)
+        // Use ~300 ms internal buffer so the OS never underruns even under load.
+        val bufSize = maxOf(minBuf * 6, SAMPLE_RATE * 2 / 10) // 200 ms
 
         val t = AudioTrack.Builder()
             .setAudioAttributes(
@@ -55,27 +74,55 @@ class AudioPlayer {
 
         t.play()
         track = t
-        Log.d(TAG, "AudioTrack started: 48kHz stereo Float32, bufSize=$bufSize")
+        running.set(true)
+        queue.clear()
+
+        // Dedicated write thread — never blocks the UDP receive coroutine.
+        playThread = Thread({
+            Log.d(TAG, "play thread started")
+            while (running.get()) {
+                try {
+                    val chunk = queue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        ?: continue
+                    // Convert Int16 LE bytes → ShortArray and write with BLOCKING mode
+                    // so every sample reaches the DAC in order.
+                    val shorts = ShortArray(chunk.size / 2)
+                    ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN)
+                        .asShortBuffer().get(shorts)
+                    t.write(shorts, 0, shorts.size)   // WRITE_BLOCKING (default)
+                } catch (_: InterruptedException) {
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "play thread error: ${e.message}")
+                }
+            }
+            Log.d(TAG, "play thread stopped")
+        }, "AudioPlayer").also { it.isDaemon = true; it.start() }
+
+        Log.d(TAG, "AudioTrack started: ${SAMPLE_RATE} Hz mono Int16, bufSize=$bufSize")
     }
 
     /**
-     * Feed one UDP 0x04 payload.  Bytes are Float32 LE interleaved [L,R,L,R…].
-     * Uses WRITE_NON_BLOCKING to absorb jitter without building up latency.
+     * Enqueue one UDP 0x04 payload.  Bytes are Int16 LE mono samples.
+     * Called from the UDP receive coroutine — must not block.
+     * If the queue is full (> 1 second of audio) the oldest chunk is
+     * discarded to prevent latency runaway.
      */
     fun write(bytes: ByteArray, length: Int = bytes.size) {
-        val t = track ?: return
-        if (t.playState != AudioTrack.PLAYSTATE_PLAYING) return
-        val floatCount = length / 4
-        if (floatCount == 0) return
-        val floats = FloatArray(floatCount)
-        ByteBuffer.wrap(bytes, 0, floatCount * 4)
-            .order(ByteOrder.LITTLE_ENDIAN)
-            .asFloatBuffer()
-            .get(floats)
-        t.write(floats, 0, floatCount, AudioTrack.WRITE_NON_BLOCKING)
+        if (!running.get()) return
+        val chunk = if (length == bytes.size) bytes else bytes.copyOf(length)
+        if (!queue.offer(chunk)) {
+            queue.poll()          // drop oldest to make room
+            queue.offer(chunk)
+        }
     }
 
     fun stop() {
+        running.set(false)
+        playThread?.interrupt()
+        playThread?.join(500)
+        playThread = null
+        queue.clear()
         try { track?.stop(); track?.release() } catch (e: Exception) {
             Log.w(TAG, "stop: ${e.message}")
         }

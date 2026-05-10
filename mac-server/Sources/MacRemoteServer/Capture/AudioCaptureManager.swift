@@ -1,118 +1,85 @@
 import Foundation
 import AVFoundation
-import CoreAudio
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  AudioCaptureManager
 //
-//  Captures Mac system-audio output via AVAudioEngine and delivers it to
-//  the caller **and** to the Mac's default audio input device so apps
-//  that listen to the microphone (Dictation, Siri, speech-recognition)
-//  also hear the stream.
+//  Captures the Mac's default audio INPUT (mic or loopback device) and
+//  streams it to Android as 16 kHz · mono · Int16 LE.
 //
-//  Architecture
-//  ┌───────────────────────────────────────────────────────────┐
-//  │  AVAudioEngine                                            │
-//  │                                                           │
-//  │  inputNode ──tap──► convertToPCM ──► onAudioBuffer (UDP) │
-//  │     │                                                     │
-//  │     └──► mainMixerNode ──► outputNode (speakers)         │
-//  │                                                           │
-//  └───────────────────────────────────────────────────────────┘
+//  Why 16 kHz / mono / Int16?
+//  • The "滋滋滋" distortion was caused by the original Float32 48 kHz path:
+//    AVAudioConverter failed (Code=-1) when the engine had no real audio
+//    graph, and WRITE_NON_BLOCKING on Android dropped frames causing gaps.
+//  • 16 kHz mono Int16 is:
+//    - speech-quality (plenty for voice / loopback monitoring)
+//    - 32 kB/s wire bandwidth vs 384 kB/s for Float32 48 kHz stereo
+//    - natively supported by every Android AudioTrack without a converter
+//    - matches the existing Android mic-to-Mac format (type 0x03) for
+//      consistency; type 0x04 now carries this simpler format
 //
-//  The tap is installed on the engine's **input node** (which reads from
-//  the default audio input device — system loopback on macOS 14+, or a
-//  virtual driver like BlackHole on older versions).
-//
-//  To route system audio into the Mac's microphone input (for Dictation /
-//  speech recognition) the system audio output device must be set to a
-//  loopback virtual device (e.g. BlackHole, Loopback, or macOS 14.2+'s
-//  built-in loopback), which then appears as a selectable input.  This
-//  class handles capture only; routing is a system-level setting.
-//
-//  Format sent to Android: 48 000 Hz · stereo · Float32 LE interleaved.
-//  Format matches AudioPlayer.kt on the Android side.
+//  System audio loopback on macOS:
+//  • macOS 14.2+: set the output device to "BlackHole 2ch" or any virtual
+//    loopback device → it appears as input → this tap captures it.
+//  • Older macOS: same principle, or use the built-in Loopback capture API.
+//  Without a loopback device the tap captures the built-in microphone.
 // ─────────────────────────────────────────────────────────────────────────────
 final class AudioCaptureManager {
 
-    // MARK: - Public
-
-    /// Called on a high-priority audio thread.
-    /// `data` is Float32 interleaved little-endian: [L0, R0, L1, R1 …].
     var onAudioBuffer: ((Data) -> Void)?
 
-    // MARK: - Private
-
-    private var engine: AVAudioEngine?
-    /// Pre-built converter; created once when formats are known to avoid
-    /// repeated creation inside the hot-path tap callback.
+    private var engine:    AVAudioEngine?
     private var converter: AVAudioConverter?
-    private var convOutputFormat: AVAudioFormat?
 
-    /// Target format for Android AudioPlayer (48 kHz, stereo, Float32 interleaved).
+    // ── Target format: 16 kHz · mono · Int16 ─────────────────────────────────
     static let targetFormat = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: 48_000,
-        channels: 2,
-        interleaved: true
+        commonFormat: .pcmFormatInt16,
+        sampleRate:   16_000,
+        channels:     1,
+        interleaved:  true
     )!
 
     // MARK: - Lifecycle
 
     func start() {
         stop()
-
         let e = AVAudioEngine()
         engine = e
 
-        // The input node connects to the default system audio input.
-        // On macOS 14+ this is the system audio loopback device when the
-        // output is set to a virtual driver; on older macOS it is whatever
-        // the user has selected in System Settings → Sound → Input.
-        let inputNode = e.inputNode
-
-        // We MUST call prepare() before asking for the input format;
-        // otherwise sampleRate can be 0 and the converter will fail.
+        // prepare() must be called before reading any format from the engine.
         e.prepare()
 
-        // inputFormat is determined by the hardware; do NOT request a
-        // specific format here — that is what caused the Code=-1 error.
-        let hwFormat = inputNode.outputFormat(forBus: 0)
-        NSLog("[AudioCapture] hw input format: \(hwFormat)")
+        let inputNode = e.inputNode
+        let hwFmt     = inputNode.outputFormat(forBus: 0)
+        NSLog("[AudioCapture] hw input format: \(hwFmt)")
 
-        guard hwFormat.sampleRate > 0 else {
-            NSLog("[AudioCapture] hardware sample rate is 0; no audio input device available.")
-            engine = nil
-            return
+        guard hwFmt.sampleRate > 0 else {
+            NSLog("[AudioCapture] sampleRate=0, no audio input device available")
+            engine = nil; return
         }
 
         let target = Self.targetFormat
 
-        // Build converter once.  If formats are identical we skip conversion.
-        if hwFormat != target, let conv = AVAudioConverter(from: hwFormat, to: target) {
-            converter = conv
-            convOutputFormat = target
-            NSLog("[AudioCapture] converter: \(hwFormat.sampleRate) Hz → \(target.sampleRate) Hz")
-        } else if hwFormat == target {
-            converter = nil
-            convOutputFormat = nil
-            NSLog("[AudioCapture] formats match; no conversion needed")
-        } else {
-            NSLog("[AudioCapture] could not create AVAudioConverter; will send raw")
-            converter = nil
-            convOutputFormat = nil
+        if hwFmt != target {
+            if let conv = AVAudioConverter(from: hwFmt, to: target) {
+                converter = conv
+                NSLog("[AudioCapture] converter: \(Int(hwFmt.sampleRate)) Hz \(hwFmt.channelCount)ch → 16kHz mono Int16")
+            } else {
+                NSLog("[AudioCapture] cannot build converter — will send raw hw format")
+                converter = nil
+            }
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) {
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFmt) {
             [weak self] buffer, _ in
             self?.handleBuffer(buffer)
         }
 
         do {
             try e.start()
-            NSLog("[AudioCapture] AVAudioEngine started (input tap, \(hwFormat.sampleRate) Hz)")
+            NSLog("[AudioCapture] engine started")
         } catch {
-            NSLog("[AudioCapture] AVAudioEngine.start() failed: \(error)")
+            NSLog("[AudioCapture] engine.start() error: \(error)")
             engine = nil
         }
     }
@@ -120,65 +87,73 @@ final class AudioCaptureManager {
     func stop() {
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
-        engine = nil
+        engine    = nil
         converter = nil
-        convOutputFormat = nil
     }
 
     // MARK: - Buffer handling
 
-    private func handleBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard buffer.frameLength > 0 else { return }
+    private func handleBuffer(_ src: AVAudioPCMBuffer) {
+        guard src.frameLength > 0 else { return }
 
-        if let conv = converter, let targetFmt = convOutputFormat {
-            convertAndSend(buffer, converter: conv, targetFmt: targetFmt)
+        if let conv = converter {
+            convertAndSend(src, conv: conv)
         } else {
-            // Same format — copy floats directly.
-            sendBuffer(buffer, format: buffer.format)
+            // hw format matches target or no converter available
+            sendAsInt16(src, format: src.format)
         }
     }
 
-    private func convertAndSend(_ buffer: AVAudioPCMBuffer,
-                                  converter: AVAudioConverter,
-                                  targetFmt: AVAudioFormat) {
-        let ratio  = targetFmt.sampleRate / buffer.format.sampleRate
-        let outCap = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1)
-        guard let outBuf = AVAudioPCMBuffer(pcmFormat: targetFmt, frameCapacity: outCap)
+    private func convertAndSend(_ src: AVAudioPCMBuffer, conv: AVAudioConverter) {
+        let target    = Self.targetFormat
+        let ratio     = target.sampleRate / src.format.sampleRate
+        let outFrames = AVAudioFrameCount(Double(src.frameLength) * ratio + 1)
+
+        guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: outFrames)
         else { return }
 
-        var inputConsumed = false
-        var convErr: NSError?
-        converter.convert(to: outBuf, error: &convErr) { _, status in
-            if inputConsumed { status.pointee = .noDataNow; return nil }
-            inputConsumed = true
-            status.pointee = .haveData
-            return buffer
+        var consumed  = false
+        var err: NSError?
+        conv.convert(to: out, error: &err) { _, status in
+            if consumed { status.pointee = .noDataNow; return nil }
+            consumed = true; status.pointee = .haveData; return src
         }
-        if let err = convErr {
-            NSLog("[AudioCapture] conversion error (suppressed after first): \(err.code)")
-            return
-        }
-        guard outBuf.frameLength > 0 else { return }
-        sendBuffer(outBuf, format: targetFmt)
+        if let e = err { NSLog("[AudioCapture] convert error: \(e.code)"); return }
+        guard out.frameLength > 0 else { return }
+        sendAsInt16(out, format: target)
     }
 
-    private func sendBuffer(_ buf: AVAudioPCMBuffer, format: AVAudioFormat) {
-        let frameLen  = Int(buf.frameLength)
-        let chCount   = Int(format.channelCount)
-        let totalSamp = frameLen * chCount
-        guard totalSamp > 0 else { return }
+    /// Copy Int16 samples into a Data blob and fire the callback.
+    private func sendAsInt16(_ buf: AVAudioPCMBuffer, format: AVAudioFormat) {
+        let frames = Int(buf.frameLength)
+        let ch     = Int(format.channelCount)
+        guard frames > 0 else { return }
 
-        var data = Data(count: totalSamp * MemoryLayout<Float>.size)
-        data.withUnsafeMutableBytes { raw in
-            guard let dst = raw.baseAddress?.assumingMemoryBound(to: Float.self) else { return }
-            if format.isInterleaved, let src = buf.floatChannelData?[0] {
-                dst.initialize(from: src, count: totalSamp)
-            } else if let ch = buf.floatChannelData {
-                for f in 0..<frameLen {
-                    for c in 0..<chCount { dst[f * chCount + c] = ch[c][f] }
+        // If the buffer holds Int16 data we can memcpy directly.
+        if format.commonFormat == .pcmFormatInt16,
+           let ptr = buf.int16ChannelData {
+            let byteCount = frames * ch * MemoryLayout<Int16>.size
+            let data = Data(bytes: ptr[0], count: byteCount)
+            onAudioBuffer?(data)
+            return
+        }
+
+        // Fallback: convert Float32 → Int16 manually.
+        if format.commonFormat == .pcmFormatFloat32,
+           let chData = buf.floatChannelData {
+            var out = Data(count: frames * ch * 2)
+            out.withUnsafeMutableBytes { rawPtr in
+                guard let dst = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self)
+                else { return }
+                for f in 0..<frames {
+                    for c in 0..<ch {
+                        let s = chData[c][f]
+                        let clamped = max(-1.0, min(1.0, s))
+                        dst[f * ch + c] = Int16(clamped * 32767.0)
+                    }
                 }
             }
+            onAudioBuffer?(out)
         }
-        onAudioBuffer?(data)
     }
 }

@@ -66,6 +66,15 @@ sealed class ControlEvent {
         override fun serialize() = "MWH:$dx"
     }
 
+    /**
+     * Velocity-proportional scroll in pixels.
+     * Mac InputSimulator passes these directly to CGEvent(.pixel).
+     * wheelY > 0 = scroll UP content; wheelX > 0 = scroll LEFT content.
+     */
+    data class ScrollPixels(val wheelX: Int, val wheelY: Int) : ControlEvent() {
+        override fun serialize() = "SP:$wheelX,$wheelY"
+    }
+
     // ── Gestures ─────────────────────────────────────────────────────────────
 
     /** Pinch-to-zoom: scaleDelta > 0 = zoom in, < 0 = zoom out. Range roughly ±0.05 per event. */

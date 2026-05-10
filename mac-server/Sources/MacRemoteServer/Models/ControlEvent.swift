@@ -16,6 +16,8 @@ enum ControlEvent {
     case mouseUp(MouseButton)                        // MU:L/R
     case mouseWheel(Int)                             // MW:dy
     case mouseWheelH(Int)                            // MWH:dx
+    /// Velocity-proportional pixel scroll (natural direction).
+    case scrollPixels(x: Int, y: Int)               // SP:x,y
 
     // Gestures
     case magnify(Float)                              // GZ:scale
@@ -63,6 +65,11 @@ enum ControlEvent {
         case "MU": return btn(args).map { .mouseUp($0) }
         case "MW": return Int(args).map { .mouseWheel($0) }
         case "MWH": return Int(args).map { .mouseWheelH($0) }
+
+        case "SP":
+            let p = args.split(separator: ",")
+            guard p.count == 2, let x = Int(p[0]), let y = Int(p[1]) else { return nil }
+            return .scrollPixels(x: x, y: y)
 
         // ── Gestures ───────────────────────────────────────────────────────
         case "GZ": return Float(args).map { .magnify($0) }

@@ -93,8 +93,17 @@ fun RemoteScreen(
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val screenHDp = with(density) { constraints.maxHeight.toDp() }
             val screenWDp = with(density) { constraints.maxWidth.toDp() }
-            val videoWDp  = (screenHDp * 1.6f).coerceAtMost(screenWDp)
-            val rightWDp  = screenWDp - videoWDp
+
+            // Compute video width from the actual remote screen's aspect ratio.
+            // Falls back to 16:10 until the first RESOLUTION message arrives.
+            val (remW, remH) = resolution ?: Pair(16, 10)
+            val ratio        = remW.toFloat() / remH.toFloat()
+            // Video fills full screen height; width = height × ratio, clamped so
+            // the right panel is at least 80 dp wide.
+            val minRightDp   = 80.dp
+            val maxVideoWDp  = screenWDp - minRightDp
+            val videoWDp     = (screenHDp * ratio).coerceAtMost(maxVideoWDp)
+            val rightWDp     = screenWDp - videoWDp
 
             CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
                 Row(modifier = Modifier.fillMaxSize()) {

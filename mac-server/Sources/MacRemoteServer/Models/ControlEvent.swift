@@ -1,74 +1,85 @@
 import Foundation
 import CoreGraphics
 
-/// Parsed control event received over UDP.
+/// Parsed control event received over UDP from the Android client.
 ///
-/// String formats (per spec §5.2):
-///   M:dx,dy        -> mouseMove(dx, dy)     // delta mode
-///   MC:L           -> mouseClick(.left)
-///   MC:R           -> mouseClick(.right)
-///   MD:L           -> mouseDown(.left)
-///   MU:L           -> mouseUp(.left)
-///   MW:dy          -> mouseWheel(dy)
-///   K:keyCode      -> keyPress(keyCode)
-///   KC:mod,code    -> keyComboPress(mod, code)  (mod = cmd|ctrl|alt|shift)
-///   T:text         -> typeText(text)
+/// See Android ControlEvent.kt for the canonical wire-format documentation.
 enum ControlEvent {
-    case mouseMove(dx: Double, dy: Double)
-    case mouseClick(MouseButton)
-    case mouseDown(MouseButton)
-    case mouseUp(MouseButton)
-    case mouseWheel(Int)
-    case keyPress(CGKeyCode)
-    case keyCombo(modifiers: CGEventFlags, keyCode: CGKeyCode)
-    case typeText(String)
+
+    // Mouse
+    case mouseMove(dx: Double, dy: Double)           // M:dx,dy
+    case mouseAbsolute(normX: Float, normY: Float)   // MA:nx,ny
+    case mouseClick(MouseButton)                     // MC:L/R
+    case mouseDown(MouseButton)                      // MD:L/R
+    case mouseUp(MouseButton)                        // MU:L/R
+    case mouseWheel(Int)                             // MW:dy
+    case mouseWheelH(Int)                            // MWH:dx
+
+    // Gestures
+    case magnify(Float)                              // GZ:scale
+    case rotate(Float)                               // GR:angle
+    case missionControl                              // GME:
+    case appExpose                                   // GAD:
+    case switchDesktop(DesktopDir)                   // GSD:L/R
+    case fourFingerSwipeH(DesktopDir)               // G4H:L/R
+    case fourFingerSwipeV(VDir)                     // G4V:U/D
+    case launchpad                                   // GLP:
+    case showDesktop                                 // GDT:
+
+    // Keyboard
+    case keyPress(CGKeyCode)                         // K:code
+    case keyCombo(modifiers: String, keyCode: CGKeyCode) // KC:mods,code
+    case typeText(String)                            // T:text
 
     enum MouseButton { case left, right }
+    enum DesktopDir  { case left, right }
+    enum VDir        { case up, down }
+
+    // MARK: - Parse
 
     static func parse(_ s: String) -> ControlEvent? {
         guard let colon = s.firstIndex(of: ":") else { return nil }
-        let tag = String(s[..<colon])
+        let tag  = String(s[..<colon])
         let args = String(s[s.index(after: colon)...])
 
         switch tag {
+        // ── Mouse ──────────────────────────────────────────────────────────
         case "M":
-            let parts = args.split(separator: ",")
-            guard parts.count == 2,
-                  let dx = Double(parts[0]),
-                  let dy = Double(parts[1]) else { return nil }
+            let p = args.split(separator: ",")
+            guard p.count == 2, let dx = Double(p[0]), let dy = Double(p[1]) else { return nil }
             return .mouseMove(dx: dx, dy: dy)
 
-        case "MC":
-            return button(from: args).map { .mouseClick($0) }
+        case "MA":
+            let p = args.split(separator: ",")
+            guard p.count == 2, let nx = Float(p[0]), let ny = Float(p[1]) else { return nil }
+            return .mouseAbsolute(normX: nx, normY: ny)
 
-        case "MD":
-            return button(from: args).map { .mouseDown($0) }
+        case "MC": return btn(args).map { .mouseClick($0) }
+        case "MD": return btn(args).map { .mouseDown($0) }
+        case "MU": return btn(args).map { .mouseUp($0) }
+        case "MW": return Int(args).map { .mouseWheel($0) }
+        case "MWH": return Int(args).map { .mouseWheelH($0) }
 
-        case "MU":
-            return button(from: args).map { .mouseUp($0) }
+        // ── Gestures ───────────────────────────────────────────────────────
+        case "GZ": return Float(args).map { .magnify($0) }
+        case "GR": return Float(args).map { .rotate($0) }
+        case "GME": return .missionControl
+        case "GAD": return .appExpose
+        case "GSD": return args == "L" ? .switchDesktop(.left) : .switchDesktop(.right)
+        case "G4H": return args == "L" ? .fourFingerSwipeH(.left) : .fourFingerSwipeH(.right)
+        case "G4V": return args == "U" ? .fourFingerSwipeV(.up) : .fourFingerSwipeV(.down)
+        case "GLP": return .launchpad
+        case "GDT": return .showDesktop
 
-        case "MW":
-            if let dy = Int(args) { return .mouseWheel(dy) }
-            return nil
-
+        // ── Keyboard ───────────────────────────────────────────────────────
         case "K":
-            if let code = UInt16(args) { return .keyPress(CGKeyCode(code)) }
-            return nil
+            guard let code = UInt16(args) else { return nil }
+            return .keyPress(CGKeyCode(code))
 
         case "KC":
-            let parts = args.split(separator: ",")
-            guard parts.count == 2, let code = UInt16(parts[1]) else { return nil }
-            var flags: CGEventFlags = []
-            for modName in parts[0].split(separator: "+") {
-                switch String(modName) {
-                case "cmd": flags.insert(.maskCommand)
-                case "ctrl": flags.insert(.maskControl)
-                case "alt", "opt": flags.insert(.maskAlternate)
-                case "shift": flags.insert(.maskShift)
-                default: break
-                }
-            }
-            return .keyCombo(modifiers: flags, keyCode: CGKeyCode(code))
+            let p = args.split(separator: ",")
+            guard p.count == 2, let code = UInt16(p[1]) else { return nil }
+            return .keyCombo(modifiers: String(p[0]), keyCode: CGKeyCode(code))
 
         case "T":
             return .typeText(args)
@@ -78,11 +89,7 @@ enum ControlEvent {
         }
     }
 
-    private static func button(from s: String) -> MouseButton? {
-        switch s {
-        case "L": return .left
-        case "R": return .right
-        default: return nil
-        }
+    private static func btn(_ s: String) -> MouseButton? {
+        switch s { case "L": return .left; case "R": return .right; default: return nil }
     }
 }

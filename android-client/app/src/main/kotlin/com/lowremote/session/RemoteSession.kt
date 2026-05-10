@@ -1,5 +1,10 @@
 package com.lowremote.session
 
+import android.content.Context
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
 import android.util.Log
 import android.view.Surface
 import com.lowremote.codec.FrameAssembler
@@ -21,121 +26,90 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/**
- * Holds everything needed for an active remote-control session with one Mac:
- *   - TCP control channel
- *   - UDP receiver (video) + sender (events)
- *   - Frame assembler + H.265 decoder feeding a Surface
- *   - Heartbeat
- *
- * State machine is intentionally thin: Idle → Connecting → Connected → Idle.
- * Disconnects collapse back to Idle and tear everything down.
- */
 class RemoteSession {
 
     companion object {
         private const val TAG = "RemoteSession"
-        /** Client-side UDP bind port. 0 = ephemeral, picked by the OS. */
         private const val CLIENT_UDP_PORT = 0
         private const val HEARTBEAT_INTERVAL_MS = 30_000L
     }
 
     enum class State { Idle, Connecting, Connected, Disconnected }
 
+    data class ScreenInfo(val index: Int, val name: String, val width: Int, val height: Int)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val tcp = TcpClient(scope)
+    private val tcp      = TcpClient(scope)
     private val receiver = UdpReceiver(port = CLIENT_UDP_PORT)
-    private val sender = UdpSender()
+    private val sender   = UdpSender()
     private val assembler = FrameAssembler()
 
     private var decoder: H265Decoder? = null
     @Volatile private var surface: Surface? = null
     private var heartbeatJob: Job? = null
     private val decoderLock = Any()
-
     private var device: RemoteDevice? = null
     private var eventFrameId: Int = 0
 
-    private val _state = MutableStateFlow(State.Idle)
-    val state: StateFlow<State> = _state
+    // ── Audio ──────────────────────────────────────────────────────────────────
+    private var audioRecord: AudioRecord? = null
+    private var audioJob: Job? = null
 
-    private val _remoteResolution = MutableStateFlow<Pair<Int, Int>?>(null)
+    // ── State flows ────────────────────────────────────────────────────────────
+    private val _state             = MutableStateFlow(State.Idle)
+    val state: StateFlow<State>    = _state
+
+    private val _remoteResolution  = MutableStateFlow<Pair<Int, Int>?>(null)
     val remoteResolution: StateFlow<Pair<Int, Int>?> = _remoteResolution
 
-    private val _fps = MutableStateFlow(60)
-    val fps: StateFlow<Int> = _fps
+    private val _fps               = MutableStateFlow(60)
+    val fps: StateFlow<Int>        = _fps
 
+    private val _screens           = MutableStateFlow<List<ScreenInfo>>(emptyList())
+    val screens: StateFlow<List<ScreenInfo>> = _screens
+
+    private val _currentScreen     = MutableStateFlow(0)
+    val currentScreen: StateFlow<Int> = _currentScreen
+
+    private val _audioEnabled      = MutableStateFlow(false)
+    val audioEnabled: StateFlow<Boolean> = _audioEnabled
+
+    // ── Init ───────────────────────────────────────────────────────────────────
     init {
-        assembler.onFrameReady = { bytes, isKeyframe ->
-            decoder?.feed(bytes, isKeyframe)
-        }
-
+        assembler.onFrameReady = { bytes, isKeyframe -> decoder?.feed(bytes, isKeyframe) }
         receiver.onPacket = { parsed, payload, _ ->
-            when (parsed.type) {
-                Packet.TYPE_VIDEO -> assembler.onPacket(parsed, payload)
-                else -> { /* ignore */ }
-            }
+            if (parsed.type == Packet.TYPE_VIDEO) assembler.onPacket(parsed, payload)
         }
-
-        tcp.onLine = { line -> handleTcpLine(line) }
-        tcp.onDisconnected = {
-            scope.launch { teardown() }
-        }
+        tcp.onLine       = { line -> handleTcpLine(line) }
+        tcp.onDisconnected = { scope.launch { teardown() } }
     }
 
+    // ── Surface ────────────────────────────────────────────────────────────────
     fun setSurface(s: Surface?) {
         synchronized(decoderLock) {
             surface = s
-            // Surface gone → tear down decoder so MediaCodec doesn't keep
-            // writing into an invalidated EGL target.
-            if (s == null) {
-                decoder?.stop()
-                decoder = null
-                return
-            }
-            // Surface just appeared while we were already connected: start
-            // decoding immediately.
-            if (_state.value == State.Connected && decoder == null) {
-                startDecoderIfReadyLocked()
-            }
+            if (s == null) { decoder?.stop(); decoder = null; return }
+            if (_state.value == State.Connected && decoder == null) startDecoderIfReadyLocked()
         }
     }
 
+    // ── Connect ────────────────────────────────────────────────────────────────
     fun connect(device: RemoteDevice, fps: Int) {
         if (_state.value != State.Idle && _state.value != State.Disconnected) return
         _state.value = State.Connecting
-        this.device = device
-        _fps.value = fps
+        this.device  = device
+        _fps.value   = fps
 
         scope.launch {
-            // 1. Start UDP first so the sender's source port is bound and we
-            //    don't miss the very first video frame the Mac emits.
             receiver.start()
-            val sock = receiver.sharedSocket()
-            if (sock == null) {
-                Log.w(TAG, "receiver socket unavailable")
-                teardown()
-                return@launch
-            }
+            val sock = receiver.sharedSocket() ?: run { teardown(); return@launch }
             sender.attach(sock, device.host, device.udpPort)
-
-            // 2. Poke the Mac's UDP listener with a no-op so it learns our
-            //    endpoint and can start streaming frames to us.
             sender.sendEvent("HELLO", nextEventFrameId())
 
-            // 3. Open TCP control channel.
-            val ok = tcp.connect(device.host, device.tcpPort)
-            if (!ok) {
-                Log.w(TAG, "tcp connect failed")
-                teardown()
-                return@launch
-            }
+            if (!tcp.connect(device.host, device.tcpPort)) { teardown(); return@launch }
 
-            // 4. Request the desired fps. The Mac responds with OK and begins
-            //    streaming; the RESOLUTION line is pushed eagerly on connect.
             tcp.send("FPS:$fps")
-
             _state.value = State.Connected
             startHeartbeat()
         }
@@ -144,31 +118,116 @@ class RemoteSession {
     fun changeFps(fps: Int) {
         _fps.value = fps
         if (_state.value == State.Connected) {
-            // Quick decoder reset — params may change on keyframe boundary.
-            synchronized(decoderLock) {
-                decoder?.flush()
-            }
+            synchronized(decoderLock) { decoder?.flush() }
             assembler.reset()
             tcp.send("FPS:$fps")
         }
     }
 
+    fun switchScreen(index: Int) {
+        if (_state.value != State.Connected) return
+        _currentScreen.value = index
+        // Tear down old decoder — resolution may change
+        synchronized(decoderLock) { decoder?.stop(); decoder = null }
+        assembler.reset()
+        tcp.send("SCREEN:$index")
+    }
+
     fun sendEvent(event: ControlEvent) {
         if (_state.value != State.Connected) return
-        // Must NOT run on the main/UI thread — DatagramSocket.send() is a
-        // network call and Android will throw NetworkOnMainThreadException if
-        // invoked from the touch-event callback chain.
         val serialized = event.serialize()
-        val frameId = nextEventFrameId()
+        val frameId    = nextEventFrameId()
         scope.launch(Dispatchers.IO) {
-            try {
-                sender.sendEvent(serialized, frameId)
-            } catch (e: Exception) {
-                Log.w(TAG, "sendEvent failed: ${e.message}")
+            try { sender.sendEvent(serialized, frameId) }
+            catch (e: Exception) { Log.w(TAG, "sendEvent failed: ${e.message}") }
+        }
+    }
+
+    // ── Audio ──────────────────────────────────────────────────────────────────
+    /**
+     * Toggle microphone capture and streaming to Mac.
+     *
+     * Protocol:
+     *   1. Android sends TCP "AUDIO_ON"  → Mac starts AVAudioEngine playback
+     *   2. Android streams raw PCM chunks over UDP (type=0x03)
+     *      Format: 16 000 Hz, mono, 16-bit signed little-endian, ~20 ms chunks
+     *   3. Mac plays PCM through its default output device.
+     *      All apps that read from the default *input* will NOT hear this directly;
+     *      the audio comes out of the speakers/headphones.
+     *      To route it as a microphone input you need a loopback virtual device
+     *      (e.g. BlackHole 2ch) set as both output + input in Audio MIDI Setup.
+     *      For **dictation / Siri / speech recognition** on macOS, set the Mac's
+     *      System Settings → Sound → Input to the same virtual device.
+     *
+     * Note: RECORD_AUDIO permission must be granted before calling this.
+     */
+    fun setAudioEnabled(enabled: Boolean) {
+        if (enabled == _audioEnabled.value) return
+        _audioEnabled.value = enabled
+        if (enabled && _state.value == State.Connected) {
+            tcp.send("AUDIO_ON")   // tell Mac to start AVAudioEngine
+            startAudioCapture()
+        } else {
+            stopAudioCapture()
+            if (_state.value == State.Connected) tcp.send("AUDIO_OFF")
+        }
+    }
+
+    private fun startAudioCapture() {
+        stopAudioCapture()
+        // Must match Mac AudioReceiver exactly:
+        //   sampleRate = 16 000 Hz
+        //   channels   = mono (1)
+        //   encoding   = PCM 16-bit signed little-endian
+        val sampleRate = 16_000
+        val channelConfig = AudioFormat.CHANNEL_IN_MONO
+        val encoding = AudioFormat.ENCODING_PCM_16BIT
+
+        // Use ~20 ms chunks: 16000 samples/s * 0.02 s * 2 bytes = 640 bytes.
+        // getMinBufferSize is a lower bound; we use 4× to avoid underruns.
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
+        if (minBuf == AudioRecord.ERROR_BAD_VALUE || minBuf <= 0) {
+            Log.w(TAG, "AudioRecord.getMinBufferSize failed"); return
+        }
+        val bufSize = maxOf(minBuf * 4, 1280) // at least 2 × 20ms frames
+
+        val rec = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate, channelConfig, encoding, bufSize
+            )
+        } catch (e: Exception) { Log.w(TAG, "AudioRecord ctor: ${e.message}"); return }
+
+        if (rec.state != AudioRecord.STATE_INITIALIZED) {
+            Log.w(TAG, "AudioRecord not initialized"); rec.release(); return
+        }
+
+        rec.startRecording()
+        audioRecord = rec
+        Log.d(TAG, "audio capture started: ${sampleRate} Hz mono 16-bit, buf=$bufSize")
+
+        audioJob = scope.launch(Dispatchers.IO) {
+            // Each read delivers one chunk; we send it immediately.
+            // 20-ms read size keeps latency low while amortising UDP overhead.
+            val chunkBytes = (sampleRate / 50) * 2   // 20 ms × 2 bytes/sample = 640
+            val buf = ByteArray(chunkBytes)
+            while (isActive && _audioEnabled.value) {
+                val read = rec.read(buf, 0, chunkBytes)
+                if (read > 0) {
+                    val packet = Packet.encodeAudio(nextEventFrameId(), buf.copyOf(read))
+                    sender.send(packet)
+                }
             }
         }
     }
 
+    private fun stopAudioCapture() {
+        audioJob?.cancel(); audioJob = null
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        audioRecord?.release(); audioRecord = null
+    }
+
+    // ── Disconnect / Release ───────────────────────────────────────────────────
     fun disconnect() {
         if (_state.value == State.Idle) return
         if (tcp.isConnected) tcp.send("DISCONNECT")
@@ -180,46 +239,53 @@ class RemoteSession {
         scope.cancel()
     }
 
-    // MARK: - Internals
-
+    // ── TCP line handler ───────────────────────────────────────────────────────
     private fun handleTcpLine(line: String) {
         val trimmed = line.trim()
         when {
             trimmed.startsWith("RESOLUTION:") -> {
-                val parts = trimmed.removePrefix("RESOLUTION:").split(",")
-                if (parts.size == 2) {
-                    val w = parts[0].toIntOrNull()
-                    val h = parts[1].toIntOrNull()
-                    if (w != null && h != null) {
-                        _remoteResolution.value = w to h
-                        startDecoderIfReady()
-                    }
+                val p = trimmed.removePrefix("RESOLUTION:").split(",")
+                val w = p.getOrNull(0)?.toIntOrNull()
+                val h = p.getOrNull(1)?.toIntOrNull()
+                if (w != null && h != null) {
+                    _remoteResolution.value = w to h
+                    startDecoderIfReady()
                 }
             }
-            trimmed == "OK" -> {
-                // Server accepted our FPS; decoder can run now.
-                startDecoderIfReady()
+            trimmed.startsWith("SCREENS:") -> {
+                // Format: SCREENS:0:主屏幕:2560x1600,1:屏幕2:1920x1080
+                val list = trimmed.removePrefix("SCREENS:").split(",").mapNotNull { entry ->
+                    val parts = entry.split(":")
+                    if (parts.size < 3) return@mapNotNull null
+                    val idx  = parts[0].toIntOrNull() ?: return@mapNotNull null
+                    val name = parts[1]
+                    val dim  = parts[2].split("x")
+                    val w2   = dim.getOrNull(0)?.toIntOrNull() ?: 0
+                    val h2   = dim.getOrNull(1)?.toIntOrNull() ?: 0
+                    ScreenInfo(idx, name, w2, h2)
+                }
+                if (list.isNotEmpty()) _screens.value = list
             }
-            trimmed == "PONG" -> { /* heartbeat reply */ }
+            trimmed == "OK" -> startDecoderIfReady()
+            trimmed == "PONG" -> { /* heartbeat */ }
         }
     }
 
+    // ── Decoder ────────────────────────────────────────────────────────────────
     private fun startDecoderIfReady() {
-        synchronized(decoderLock) {
-            startDecoderIfReadyLocked()
-        }
+        synchronized(decoderLock) { startDecoderIfReadyLocked() }
     }
-
     private fun startDecoderIfReadyLocked() {
-        val s = surface ?: return
+        val s        = surface ?: return
         if (decoder != null) return
-        val (w, h) = _remoteResolution.value ?: (1920 to 1080)
-        val dec = H265Decoder(s, _fps.value)
+        val (w, h)   = _remoteResolution.value ?: (1920 to 1080)
+        val dec      = H265Decoder(s, _fps.value)
         dec.start(w, h)
-        decoder = dec
-        Log.d(TAG, "decoder started: $w x $h @ ${_fps.value}fps")
+        decoder      = dec
+        Log.d(TAG, "decoder: ${w}x${h} @ ${_fps.value}fps")
     }
 
+    // ── Heartbeat ──────────────────────────────────────────────────────────────
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
@@ -230,15 +296,15 @@ class RemoteSession {
         }
     }
 
+    // ── Teardown ───────────────────────────────────────────────────────────────
     private suspend fun teardown() {
-        heartbeatJob?.cancel()
-        heartbeatJob = null
+        heartbeatJob?.cancel(); heartbeatJob = null
+        if (_audioEnabled.value) tcp.send("AUDIO_OFF")
+        stopAudioCapture()
+        _audioEnabled.value = false
         tcp.disconnect()
         receiver.stop()
-        synchronized(decoderLock) {
-            decoder?.stop()
-            decoder = null
-        }
+        synchronized(decoderLock) { decoder?.stop(); decoder = null }
         assembler.reset()
         _state.value = State.Disconnected
         device = null

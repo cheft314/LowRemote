@@ -3,74 +3,131 @@ package com.lowremote.ui
 import android.os.Build
 import android.view.HapticFeedbackConstants
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.lowremote.model.ControlEvent
 import com.lowremote.model.MacKeyCodes
 
 /**
- * 快捷键区域 —— 仅快捷键按钮网格，无标题、无输入框。
- * 点击按钮时触发震动反馈（VIRTUAL_KEY）。
+ * 快捷键区域。
  *
- * 布局：3 列均分，竖向可滚动（LazyColumn），充满父容器剩余高度。
+ * 三区结构：
+ *  1. 功能开关行（固定，不滚动）  — 拖拽锁 · 麦克风 · 键盘输入
+ *  2. 内联键盘输入区（可显隐）    — 弹出 Android IME，输入后发送到 Mac
+ *  3. 快捷键滚动网格（剩余空间）  — 3 列，可滚动
  */
 @Composable
 fun ShortcutKeyboard(
-    modifier: Modifier = Modifier,
-    onEvent: (ControlEvent) -> Unit,
+    modifier:     Modifier = Modifier,
+    onEvent:      (ControlEvent) -> Unit,
+    dragLockOn:   Boolean  = false,
+    onDragLock:   (Boolean) -> Unit = {},
+    audioOn:      Boolean  = false,
+    onAudio:      (Boolean) -> Unit = {},
+    onSendText:   (String) -> Unit  = {},
 ) {
     val shortcuts = remember { buildShortcuts() }
-    val rows = remember(shortcuts) { shortcuts.chunked(3) }
+    val rows      = remember(shortcuts) { shortcuts.chunked(3) }
     val listState = rememberLazyListState()
-    val rootView = LocalView.current
+    val rootView  = LocalView.current
+    val ctx       = LocalContext.current
 
-    Box(
+    // Show/hide the inline input bar
+    var showInput by remember { mutableStateOf(false) }
+
+    Column(
         modifier = modifier
             .background(Color(0xFF141414))
             .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        // ── Row 1: functional toggles ─────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            items(rows) { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    row.forEach { sc ->
-                        KeyButton(
-                            label = sc.label,
-                            modifier = Modifier.weight(1f),
-                            rootView = rootView,
-                            onClick = { onEvent(sc.event) },
-                        )
+            // Drag-lock toggle
+            ToggleIconBtn(
+                label    = if (dragLockOn) "🔒拖拽" else "拖拽",
+                active   = dragLockOn,
+                modifier = Modifier.weight(1f),
+                view     = rootView,
+                onClick  = { onDragLock(!dragLockOn) },
+            )
+            // Mic toggle
+            ToggleIconBtn(
+                label    = if (audioOn) "🎙️传音中" else "🎙️传音",
+                active   = audioOn,
+                modifier = Modifier.weight(1f),
+                view     = rootView,
+                onClick  = { onAudio(!audioOn) },
+            )
+            // Keyboard toggle
+            ToggleIconBtn(
+                label    = if (showInput) "⌨️收键盘" else "⌨️打字",
+                active   = showInput,
+                modifier = Modifier.weight(1f),
+                view     = rootView,
+                onClick  = { showInput = !showInput },
+            )
+        }
+
+        // ── Row 2: inline IME input bar (visible when showInput) ──────────────
+        if (showInput) {
+            InlineInputBar(
+                onSend = { text ->
+                    if (text.isNotEmpty()) {
+                        onSendText(text)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                            rootView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        else
+                            rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     }
-                    // 末行不足 3 个时用空 Box 占位，保持等宽
-                    repeat(3 - row.size) {
-                        Box(Modifier.weight(1f))
+                },
+            )
+        }
+
+        // ── Row 3: shortcut grid ──────────────────────────────────────────────
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                state    = listState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(rows) { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        row.forEach { sc ->
+                            KeyButton(
+                                label    = sc.label,
+                                modifier = Modifier.weight(1f),
+                                view     = rootView,
+                                onClick  = { onEvent(sc.event) },
+                            )
+                        }
+                        repeat(3 - row.size) { Box(Modifier.weight(1f)) }
                     }
                 }
             }
@@ -78,82 +135,169 @@ fun ShortcutKeyboard(
     }
 }
 
+// ── Inline IME input ──────────────────────────────────────────────────────────
 @Composable
-private fun KeyButton(
-    label: String,
+private fun InlineInputBar(onSend: (String) -> Unit) {
+    // 使用 remember 保存 EditText 引用，直接读取其内容，
+    // 避免 Compose state 闭包捕获旧值导致发送空字符串的问题。
+    val editRef = remember { mutableStateOf<EditText?>(null) }
+    val onSendUpdated by rememberUpdatedState(onSend)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        AndroidView(
+            factory = { ctx2 ->
+                EditText(ctx2).apply {
+                    hint          = "输入文字 → 发往 Mac（回车发送）"
+                    inputType     = android.text.InputType.TYPE_CLASS_TEXT or
+                                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    imeOptions    = EditorInfo.IME_ACTION_SEND
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setHintTextColor(0xFF666666.toInt())
+                    background    = null
+                    maxLines      = 1
+                    editRef.value = this
+
+                    setOnEditorActionListener { _, actionId, _ ->
+                        if (actionId == EditorInfo.IME_ACTION_SEND ||
+                            actionId == EditorInfo.IME_ACTION_DONE) {
+                            val t = text.toString()
+                            if (t.isNotEmpty()) {
+                                onSendUpdated(t)
+                                setText("")
+                            }
+                            true
+                        } else false
+                    }
+
+                    // 自动弹出键盘
+                    post {
+                        requestFocus()
+                        val imm = ctx2.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                                as InputMethodManager
+                        imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+                    }
+                }
+            },
+            modifier = Modifier.weight(1f),
+        )
+
+        // 手动发送按钮：直接读 EditText.text，不依赖 Compose state
+        Button(
+            onClick = {
+                val et   = editRef.value ?: return@Button
+                val text = et.text.toString()
+                if (text.isNotEmpty()) {
+                    onSendUpdated(text)
+                    et.setText("")
+                }
+            },
+            colors   = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF4A90E2), contentColor = Color.White),
+            shape    = RoundedCornerShape(5.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            modifier = Modifier.height(30.dp),
+        ) { Text("发", fontSize = 11.sp) }
+    }
+}
+
+// ── Small button widgets ──────────────────────────────────────────────────────
+@Composable
+private fun ToggleIconBtn(
+    label:    String,
+    active:   Boolean,
     modifier: Modifier = Modifier,
-    rootView: View,
-    onClick: () -> Unit,
+    view:     View,
+    onClick:  () -> Unit,
 ) {
     Button(
         onClick = {
-            // 触发震动反馈
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                rootView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            } else {
-                rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            else
+                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             onClick()
         },
-        modifier = modifier.height(36.dp),
-        shape = RoundedCornerShape(5.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color(0xFF2B2B2B),
-            contentColor = Color(0xFFE0E0E0),
+        modifier = modifier.height(30.dp),
+        shape    = RoundedCornerShape(5.dp),
+        colors   = ButtonDefaults.buttonColors(
+            containerColor = if (active) Color(0xFF1D4E89) else Color(0xFF252525),
+            contentColor   = if (active) Color(0xFFADD8FF) else Color(0xFF999999),
         ),
         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
         elevation = null,
     ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            maxLines = 1,
-            softWrap = false,
-        )
+        Text(label, fontSize = 10.sp, maxLines = 1, softWrap = false)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 快捷键定义
-// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun KeyButton(
+    label:    String,
+    modifier: Modifier = Modifier,
+    view:     View,
+    onClick:  () -> Unit,
+) {
+    Button(
+        onClick = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            else
+                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            onClick()
+        },
+        modifier = modifier.height(36.dp),
+        shape    = RoundedCornerShape(5.dp),
+        colors   = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF2B2B2B), contentColor = Color(0xFFE0E0E0)),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+        elevation = null,
+    ) {
+        Text(label, fontSize = 12.sp, maxLines = 1, softWrap = false)
+    }
+}
 
+// ── Shortcut definitions ──────────────────────────────────────────────────────
 private data class Shortcut(val label: String, val event: ControlEvent)
 
 private fun buildShortcuts(): List<Shortcut> = listOf(
-    // 常用编辑
-    Shortcut("⌘C",    ControlEvent.KeyCombo("cmd", MacKeyCodes.C)),
-    Shortcut("⌘V",    ControlEvent.KeyCombo("cmd", MacKeyCodes.V)),
-    Shortcut("⌘X",    ControlEvent.KeyCombo("cmd", MacKeyCodes.X)),
-    Shortcut("⌘Z",    ControlEvent.KeyCombo("cmd", MacKeyCodes.Z)),
-    Shortcut("⌘⇧Z",  ControlEvent.KeyCombo("cmd+shift", MacKeyCodes.Z)),
-    Shortcut("⌘A",    ControlEvent.KeyCombo("cmd", MacKeyCodes.A)),
-    // 文件 / 应用
-    Shortcut("⌘S",    ControlEvent.KeyCombo("cmd", MacKeyCodes.S)),
-    Shortcut("⌘W",    ControlEvent.KeyCombo("cmd", MacKeyCodes.W)),
-    Shortcut("⌘Q",    ControlEvent.KeyCombo("cmd", MacKeyCodes.Q)),
-    Shortcut("⌘N",    ControlEvent.KeyCombo("cmd", MacKeyCodes.N)),
-    Shortcut("⌘T",    ControlEvent.KeyCombo("cmd", MacKeyCodes.T)),
-    Shortcut("⌘F",    ControlEvent.KeyCombo("cmd", MacKeyCodes.F)),
-    // 系统
-    Shortcut("⌘Tab",  ControlEvent.KeyCombo("cmd", MacKeyCodes.TAB)),
-    Shortcut("⌘␣",   ControlEvent.KeyCombo("cmd", MacKeyCodes.SPACE)),
-    Shortcut("⌘⇧3",  ControlEvent.KeyCombo("cmd+shift", 20)),   // 截图全屏
-    Shortcut("⌘⇧4",  ControlEvent.KeyCombo("cmd+shift", 21)),   // 截图选区
-    // 导航键
-    Shortcut("Esc",    ControlEvent.KeyPress(MacKeyCodes.ESCAPE)),
-    Shortcut("⏎",     ControlEvent.KeyPress(MacKeyCodes.RETURN)),
-    Shortcut("⌫",     ControlEvent.KeyPress(MacKeyCodes.DELETE)),
-    Shortcut("Tab",    ControlEvent.KeyPress(MacKeyCodes.TAB)),
-    Shortcut("↑",      ControlEvent.KeyPress(MacKeyCodes.ARROW_UP)),
-    Shortcut("←",      ControlEvent.KeyPress(MacKeyCodes.ARROW_LEFT)),
-    Shortcut("↓",      ControlEvent.KeyPress(MacKeyCodes.ARROW_DOWN)),
-    Shortcut("→",      ControlEvent.KeyPress(MacKeyCodes.ARROW_RIGHT)),
-    // 页面导航
-    Shortcut("⌘←",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_LEFT)),
-    Shortcut("⌘→",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_RIGHT)),
-    Shortcut("⌘↑",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_UP)),
-    Shortcut("⌘↓",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_DOWN)),
-    // 亮度 / 音量（功能键模拟）
-    Shortcut("⌘+",    ControlEvent.KeyCombo("cmd", 24)),
-    Shortcut("⌘-",    ControlEvent.KeyCombo("cmd", 27)),
+    Shortcut("⌘C",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.C)),
+    Shortcut("⌘V",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.V)),
+    Shortcut("⌘X",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.X)),
+    Shortcut("⌘Z",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.Z)),
+    Shortcut("⌘⇧Z", ControlEvent.KeyCombo("cmd+shift", MacKeyCodes.Z)),
+    Shortcut("⌘A",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.A)),
+    Shortcut("⌘S",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.S)),
+    Shortcut("⌘W",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.W)),
+    Shortcut("⌘Q",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.Q)),
+    Shortcut("⌘N",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.N)),
+    Shortcut("⌘T",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.T)),
+    Shortcut("⌘F",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.F)),
+    Shortcut("⌘Tab", ControlEvent.KeyCombo("cmd",       MacKeyCodes.TAB)),
+    Shortcut("⌘␣",  ControlEvent.KeyCombo("cmd",       MacKeyCodes.SPACE)),
+    Shortcut("⌘⇧3", ControlEvent.KeyCombo("cmd+shift", 20)),
+    Shortcut("⌘⇧4", ControlEvent.KeyCombo("cmd+shift", 21)),
+    Shortcut("Esc",  ControlEvent.KeyPress(MacKeyCodes.ESCAPE)),
+    Shortcut("⏎",   ControlEvent.KeyPress(MacKeyCodes.RETURN)),
+    Shortcut("⌫",   ControlEvent.KeyPress(MacKeyCodes.DELETE)),
+    Shortcut("Tab",  ControlEvent.KeyPress(MacKeyCodes.TAB)),
+    Shortcut("↑",   ControlEvent.KeyPress(MacKeyCodes.ARROW_UP)),
+    Shortcut("←",   ControlEvent.KeyPress(MacKeyCodes.ARROW_LEFT)),
+    Shortcut("↓",   ControlEvent.KeyPress(MacKeyCodes.ARROW_DOWN)),
+    Shortcut("→",   ControlEvent.KeyPress(MacKeyCodes.ARROW_RIGHT)),
+    Shortcut("⌘←",  ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_LEFT)),
+    Shortcut("⌘→",  ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_RIGHT)),
+    Shortcut("⌘↑",  ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_UP)),
+    Shortcut("⌘↓",  ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_DOWN)),
+    Shortcut("⌘+",  ControlEvent.KeyCombo("cmd", 24)),
+    Shortcut("⌘-",  ControlEvent.KeyCombo("cmd", 27)),
+    Shortcut("F3",   ControlEvent.KeyPress(MacKeyCodes.F3)),
+    Shortcut("F4",   ControlEvent.KeyPress(MacKeyCodes.F4)),
+    Shortcut("F11",  ControlEvent.KeyPress(MacKeyCodes.F11)),
 )

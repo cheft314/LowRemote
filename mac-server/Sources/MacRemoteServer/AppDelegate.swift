@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import AVFoundation
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -19,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clientEndpoint: (host: String, port: UInt16)?
     private var currentFPS: Int = 60
     private var frameIdCounter: UInt32 = 0
+    /// Index of the display currently being streamed. 0 = main display.
+    private var currentDisplayIndex: Int = 0
+    private var audioReceiver: AudioReceiver?
 
     // MARK: - Lifecycle
 
@@ -30,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopStreaming()
+        audioReceiver?.stop()
         tcpServer?.stop()
         udpServer?.stop()
         bonjour?.stop()
@@ -111,10 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         tcpServer.onClientConnected = { [weak self] host in
             self?.updateStatus("已连接 \(host)")
-            // Send screen resolution as handshake
-            if let size = ScreenCaptureManager.mainDisplayPixelSize() {
-                self?.tcpServer.broadcast("RESOLUTION:\(Int(size.width)),\(Int(size.height))\n")
-            }
+            // Handshake: send resolution + screen list
+            self?.sendHandshake()
         }
         tcpServer.onClientDisconnected = { [weak self] in
             self?.updateStatus("等待连接")
@@ -123,10 +126,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         tcpServer.start()
 
-        // UDP data server (receives control events, sends video)
+        // UDP data server (receives control events, audio PCM, sends video)
+        audioReceiver = AudioReceiver()
+
         udpServer = UDPServer(port: 8891)
         udpServer.onControlEvent = { [weak self] event in
             self?.inputSimulator.handleEvent(event)
+        }
+        udpServer.onAudioData = { [weak self] pcmData in
+            self?.audioReceiver?.onAudioData(pcmData)
         }
         udpServer.onFirstPacketFromClient = { [weak self] host, port in
             // Remember client's UDP endpoint so we know where to stream video to
@@ -149,6 +157,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - TCP Command Handling
 
+    private func sendHandshake() {
+        // Send current display's resolution
+        let displays = ScreenCaptureManager.allDisplays()
+        let idx = min(currentDisplayIndex, displays.count - 1)
+        let size = idx >= 0 ? displays[idx].size : CGSize(width: 1920, height: 1080)
+        tcpServer.broadcast("RESOLUTION:\(Int(size.width)),\(Int(size.height))\n")
+        // Send screen list
+        let names = displays.enumerated().map { i, d in
+            "\(i):\(d.name):\(Int(d.size.width))x\(Int(d.size.height))"
+        }.joined(separator: ",")
+        tcpServer.broadcast("SCREENS:\(names)\n")
+    }
+
     private func handleTCPCommand(_ cmd: String, clientHost: String) {
         let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
         NSLog("[LowRemote] TCP cmd: \(trimmed) from \(clientHost)")
@@ -161,8 +182,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 tcpServer.broadcast("OK\n")
                 startStreaming(fps: fps)
             }
+        } else if trimmed.hasPrefix("SCREEN:") {
+            let val = trimmed.dropFirst(7)
+            if let idx = Int(val) {
+                let displays = ScreenCaptureManager.allDisplays()
+                if idx >= 0 && idx < displays.count {
+                    currentDisplayIndex = idx
+                    tcpServer.broadcast("OK\n")
+                    startStreaming(fps: currentFPS)
+                    // Re-send resolution for new screen
+                    let sz = displays[idx].size
+                    tcpServer.broadcast("RESOLUTION:\(Int(sz.width)),\(Int(sz.height))\n")
+                }
+            }
         } else if trimmed == "PING" {
             tcpServer.broadcast("PONG\n")
+        } else if trimmed == "AUDIO_ON" {
+            audioReceiver?.start()
+            tcpServer.broadcast("OK\n")
+        } else if trimmed == "AUDIO_OFF" {
+            audioReceiver?.stop()
+            tcpServer.broadcast("OK\n")
         } else if trimmed == "DISCONNECT" {
             stopStreaming()
             tcpServer.disconnectAll()
@@ -174,12 +214,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startStreaming(fps: Int) {
         stopStreaming()
 
-        guard let size = ScreenCaptureManager.mainDisplayPixelSize() else {
-            NSLog("[LowRemote] Failed to get main display size")
-            return
+        let displays = ScreenCaptureManager.allDisplays()
+        let idx = min(currentDisplayIndex, max(0, displays.count - 1))
+        let displayID: CGDirectDisplayID
+        let width: Int
+        let height: Int
+        if !displays.isEmpty {
+            displayID = displays[idx].id
+            width  = Int(displays[idx].size.width)
+            height = Int(displays[idx].size.height)
+        } else {
+            displayID = CGMainDisplayID()
+            width  = 1920
+            height = 1080
         }
-        let width = Int(size.width)
-        let height = Int(size.height)
 
         let bitrate: Int
         switch fps {
@@ -203,9 +251,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenCapture.onFrame = { [weak self] pixelBuffer in
             self?.encoder.encode(pixelBuffer: pixelBuffer)
         }
-        screenCapture.start(fps: fps)
+        screenCapture.start(fps: fps, displayID: displayID)
 
-        NSLog("[LowRemote] Streaming started at \(fps) fps (\(width)x\(height))")
+        NSLog("[LowRemote] Streaming started at \(fps) fps (\(width)x\(height)) display[\(idx)]")
     }
 
     private func stopStreaming() {

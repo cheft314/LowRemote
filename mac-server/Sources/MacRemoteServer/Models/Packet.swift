@@ -18,8 +18,10 @@ enum Packet {
     static let mtuSafeTotal = 1400
     static let maxPayloadSize = mtuSafeTotal - headerSize
 
-    static let typeVideo: UInt8 = 0x01
+    static let typeVideo: UInt8   = 0x01
     static let typeControl: UInt8 = 0x02
+    /// Raw PCM audio from Android microphone: 16 kHz, mono, 16-bit little-endian.
+    static let typeAudio: UInt8   = 0x03
 
     static let flagKeyframe: UInt8 = 0x01
 

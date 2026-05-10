@@ -131,6 +131,13 @@ class TouchpadView @JvmOverloads constructor(
     private var longPressTime  = 0L
     private var dragActive     = false
 
+    /**
+     * Set to true when a multi-finger gesture (2+ fingers) has been
+     * evaluated on POINTER_UP so that the final ACTION_UP on the last
+     * remaining finger does NOT also fire a single-finger tap.
+     */
+    private var multiFingerHandled = false
+
     // Single-finger
     private var sfStartX = 0f; private var sfStartY = 0f
     private var sfLastX  = 0f; private var sfLastY  = 0f
@@ -174,9 +181,10 @@ class TouchpadView @JvmOverloads constructor(
         when (ev.actionMasked) {
 
             MotionEvent.ACTION_DOWN -> {
-                fingerCount   = 1
-                gestureStart  = SystemClock.uptimeMillis()
-                longPressTime = gestureStart + LONG_PRESS_MS
+                fingerCount        = 1
+                multiFingerHandled = false
+                gestureStart       = SystemClock.uptimeMillis()
+                longPressTime      = gestureStart + LONG_PRESS_MS
                 sfStartX = ev.x; sfStartY = ev.y
                 sfLastX  = ev.x; sfLastY  = ev.y
                 // Stop any in-progress fling
@@ -217,7 +225,8 @@ class TouchpadView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_UP -> {
                 val remaining = count - 1
                 if (remaining < fingerCount) {
-                    evaluatePointerUp(ev, fingerCount)
+                    val fired = evaluatePointerUp(ev, fingerCount)
+                    if (fired) multiFingerHandled = true
                     // Launch momentum fling if we were scrolling
                     if (fingerCount == 2 && tfMode == TwoMode.SCROLL) {
                         removeCallbacks(flingRunnable)
@@ -238,7 +247,7 @@ class TouchpadView @JvmOverloads constructor(
                 val elapsed = SystemClock.uptimeMillis() - gestureStart
                 val moved   = hypot(ev.x - sfStartX, ev.y - sfStartY)
                 if (fingerCount == 1) {
-                    if (!dragActive && elapsed < TAP_MS && moved < tapMovePx) {
+                    if (!multiFingerHandled && !dragActive && elapsed < TAP_MS && moved < tapMovePx) {
                         fireTap()
                     } else if (dragActive) {
                         fireDragUp()
@@ -246,13 +255,15 @@ class TouchpadView @JvmOverloads constructor(
                         invalidate()
                     }
                 }
-                fingerCount = 0
+                fingerCount        = 0
+                multiFingerHandled = false
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 if (dragActive) { fireDragUp(); dragActive = false; invalidate() }
                 removeCallbacks(flingRunnable); flingVelX = 0f; flingVelY = 0f
-                fingerCount = 0
+                fingerCount        = 0
+                multiFingerHandled = false
             }
         }
         return true
@@ -420,15 +431,18 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     // ── Pointer-up tap evaluation (2/3 finger) ────────────────────────────────
-    private fun evaluatePointerUp(ev: MotionEvent, wasFingers: Int) {
+    /** Returns true if a multi-finger tap event was fired. */
+    private fun evaluatePointerUp(ev: MotionEvent, wasFingers: Int): Boolean {
         val elapsed = SystemClock.uptimeMillis() - gestureStart
-        if (elapsed > TAP_MS + 60) return // small extra grace period for multi-touch
-        when (wasFingers) {
+        if (elapsed > TAP_MS + 60) return false // small extra grace period for multi-touch
+        return when (wasFingers) {
             2 -> if (tfMode == TwoMode.UNDECIDED || tfTotalMove < tapMovePx) {
                 onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.RIGHT))
                 haptic(HapticFeedbackConstants.CONTEXT_CLICK)
-            }
+                true
+            } else false
             // 3-finger tap: ignored (too easy to trigger accidentally)
+            else -> false
         }
     }
 

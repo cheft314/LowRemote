@@ -84,6 +84,27 @@ class TcpClient(
         }
     }
 
+    /**
+     * Stream raw bytes from [stream] directly onto the TCP socket without
+     * any line-framing.  Called from a coroutine already on Dispatchers.IO.
+     * The [totalBytes] value is used for logging only.
+     */
+    fun sendRawStream(stream: java.io.InputStream, totalBytes: Long) {
+        val buf     = ByteArray(32 * 1024) // 32 KB chunks
+        var written = 0L
+        try {
+            var n: Int
+            while (stream.read(buf).also { n = it } != -1) {
+                output?.write(buf, 0, n)
+                written += n
+            }
+            output?.flush()
+            Log.d(TAG, "sendRawStream: $written / $totalBytes bytes written")
+        } catch (e: IOException) {
+            Log.w(TAG, "sendRawStream failed after ${written}B: ${e.message}")
+        }
+    }
+
     fun disconnect() {
         readerJob?.cancel()
         readerJob = null

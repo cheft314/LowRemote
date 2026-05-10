@@ -170,6 +170,7 @@ fun RemoteScreen(
                                 }
                             },
                             onSendText    = { text -> session.sendEvent(ControlEvent.TypeText(text)) },
+                            onSendFiles   = { uris -> session.sendFiles(uris, ctx) },
                         )
                         AndroidView(
                             factory = { c ->

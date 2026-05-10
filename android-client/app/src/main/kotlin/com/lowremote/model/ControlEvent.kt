@@ -50,6 +50,9 @@ sealed class ControlEvent {
     data class MouseDoubleClick(val button: Button) : ControlEvent() {
         override fun serialize() = "MDC:${button.code}"
     }
+    data class MouseTripleClick(val button: Button) : ControlEvent() {
+        override fun serialize() = "MTC:${button.code}"
+    }
     data class MouseDown(val button: Button) : ControlEvent() {
         override fun serialize() = "MD:${button.code}"
     }
@@ -61,6 +64,15 @@ sealed class ControlEvent {
     }
     data class MouseWheelH(val dx: Int) : ControlEvent() {
         override fun serialize() = "MWH:$dx"
+    }
+
+    /**
+     * Velocity-proportional scroll in pixels.
+     * Mac InputSimulator passes these directly to CGEvent(.pixel).
+     * wheelY > 0 = scroll UP content; wheelX > 0 = scroll LEFT content.
+     */
+    data class ScrollPixels(val wheelX: Int, val wheelY: Int) : ControlEvent() {
+        override fun serialize() = "SP:$wheelX,$wheelY"
     }
 
     // ── Gestures ─────────────────────────────────────────────────────────────

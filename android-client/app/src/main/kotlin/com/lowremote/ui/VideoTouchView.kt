@@ -51,11 +51,12 @@ class VideoTouchView @JvmOverloads constructor(
     var sensitivity:     Float   = 2.0f
     /** Only effective in trackpad mode. */
     var dragLockEnabled: Boolean = false
+    /** Called on ACTION_DOWN — lets the parent close any open drawer immediately. */
+    var onFirstTouch: (() -> Unit)? = null
 
     // ── Constants ─────────────────────────────────────────────────────────────
     private val dp           = context.resources.displayMetrics.density
     private val tapMovePx    = 10f * dp
-    private val scrollTickPx = 12f * dp
     private val mfSwipePx    = 18f * dp
     private val TAP_MS       = 240L
     private val DBLCLICK_MS  = 380L
@@ -69,8 +70,9 @@ class VideoTouchView @JvmOverloads constructor(
     private var sfDeltaDragging = false
     private var sfLongFired     = false   // long-press right-click already fired
 
-    // Double-tap tracking
-    private var lastTapT = 0L; private var lastTapX = 0f; private var lastTapY = 0f
+    // Double-tap tracking (supports triple-click too)
+    private var lastTapT  = 0L; private var lastTapX  = 0f; private var lastTapY  = 0f
+    private var prevTapT  = 0L; private var prevTapX  = 0f; private var prevTapY  = 0f
 
     // ── Two-finger ────────────────────────────────────────────────────────────
     private var tfMidX = 0f; private var tfMidY = 0f
@@ -93,6 +95,8 @@ class VideoTouchView @JvmOverloads constructor(
                 sfStartT = SystemClock.uptimeMillis()
                 sfLongT  = sfStartT + LONG_MS
                 sfAbsDragging = false; sfDeltaDragging = false; sfLongFired = false
+                // Notify parent immediately so it can close any open drawer
+                onFirstTouch?.invoke()
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -194,12 +198,18 @@ class VideoTouchView @JvmOverloads constructor(
         val my = (ev.getY(0) + ev.getY(1)) / 2f
         val dX = mx - tfMidX; val dY = my - tfMidY
         tfMidX = mx; tfMidY = my
+
+        // Velocity-proportional scroll — same direction as TouchpadView.
+        // Traditional: finger down → content scrolls UP → pyI > 0 → wheel1 > 0 on Mac.
+        val SCALE = 2.5f
+        val MAX   = 80
+        val pyI = (dY * SCALE).toInt().coerceIn(-MAX, MAX)
+        val pxI = (dX * SCALE).toInt().coerceIn(-MAX, MAX)
+        if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, pyI))
+        if (pxI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(pxI, 0))
+
+        // Keep legacy accumulators so evalTwoFingerTap still works
         tfScrollX += dX; tfScrollY += dY
-        // Natural scroll (fixed): finger down → dY > 0 → content down → wheel -1
-        while (tfScrollY >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(-1)); tfScrollY -= scrollTickPx }
-        while (tfScrollY <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(+1)); tfScrollY += scrollTickPx }
-        while (tfScrollX >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(-1)); tfScrollX -= scrollTickPx }
-        while (tfScrollX <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(+1)); tfScrollX += scrollTickPx }
     }
 
     // ── Multi-finger (3/4) ────────────────────────────────────────────────────
@@ -233,35 +243,40 @@ class VideoTouchView @JvmOverloads constructor(
         }
     }
 
-    // ── Tap (with double-click) ────────────────────────────────────────────────
+    // ── Tap (with double/triple-click) ────────────────────────────────────────
     private fun fireTap(x: Float, y: Float) {
-        val now = SystemClock.uptimeMillis()
-        val gap = now - lastTapT
-        val near = hypot(x - lastTapX, y - lastTapY) < tapMovePx * 3f
+        val now  = SystemClock.uptimeMillis()
+        val gap1 = now - lastTapT
+        val gap2 = now - prevTapT
+        val near1 = hypot(x - lastTapX, y - lastTapY) < tapMovePx * 3f
+        val near2 = hypot(x - prevTapX,  y - prevTapY)  < tapMovePx * 3f
+
+        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
 
         if (touchscreenMode) {
             val (nx, ny) = normalize(x, y)
             onEvent?.invoke(ControlEvent.MouseAbsolute(nx, ny))
-            if (gap < DBLCLICK_MS && near) {
-                // Double-click: send two clicks
-                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-                lastTapT = 0L
-            } else {
-                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
+        }
+
+        when {
+            // Triple-click
+            gap1 < DBLCLICK_MS && near1 && gap2 < DBLCLICK_MS * 2 && near2 && lastTapT > 0L && prevTapT > 0L -> {
+                onEvent?.invoke(ControlEvent.MouseTripleClick(ControlEvent.Button.LEFT))
+                prevTapT = 0L; lastTapT = 0L
+            }
+            // Double-click
+            gap1 < DBLCLICK_MS && near1 && lastTapT > 0L -> {
+                onEvent?.invoke(ControlEvent.MouseDoubleClick(ControlEvent.Button.LEFT))
+                prevTapT = lastTapT; prevTapX = lastTapX; prevTapY = lastTapY
                 lastTapT = now; lastTapX = x; lastTapY = y
             }
-        } else {
-            if (gap < DBLCLICK_MS && near) {
+            // Single-click
+            else -> {
                 onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-                lastTapT = 0L
-            } else {
-                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
+                prevTapT = lastTapT; prevTapX = lastTapX; prevTapY = lastTapY
                 lastTapT = now; lastTapX = x; lastTapY = y
             }
         }
-        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
     }
 
     private fun evalTwoFingerTap(ev: MotionEvent) {

@@ -53,20 +53,42 @@ class TouchpadView @JvmOverloads constructor(
         private const val DOUBLE_TAP_MS     = 380L   // max gap between two taps
         private const val TAP_MOVE_DP       = 8f
         private const val LONG_PRESS_MS     = 450L
-        private const val SCROLL_TICK_DP    = 10f    // px per scroll tick (smaller = faster)
         private const val PINCH_MIN_DELTA   = 0.004f
         // Multi-finger gesture: trigger after only 18dp displacement (was 40dp — too high)
         private const val MF_SWIPE_DP       = 18f
+
+        // ── Scroll tuning ──────────────────────────────────────────────────────
+        // Direct pixel scroll: each motion event emits a pixel magnitude that
+        // is proportional to how fast the fingers are moving (velocity-proportional).
+        //
+        // DIRECTION: traditional (non-natural) scroll — same as Mac "uncheck
+        // Natural Scrolling" or iOS UIScrollView default.
+        //   finger DOWN → content scrolls UP   (wheel1 > 0 on Mac)
+        //   finger UP   → content scrolls DOWN  (wheel1 < 0 on Mac)
+        //
+        // FORMULA: pixels = |delta_dp| × SCALE, clamped to MAX.
+        // Slower SCALE (2.5) gives more control and feels closer to the native
+        // Magic Trackpad speed on a retina display.
+        private const val SCROLL_SCALE  = 2.5f    // reduced from 4.5 — more control
+        private const val SCROLL_MAX_PX = 80       // cap per-frame
+
+        // ── Momentum / fling ────────────────────────────────────────────────────
+        // After lifting fingers we keep sending decaying scroll events to simulate
+        // the inertia that a real Mac trackpad produces.
+        // Each frame the velocity is multiplied by FLING_DECAY until it reaches
+        // FLING_MIN_PX, then stops.
+        private const val FLING_DECAY   = 0.82f   // friction per 16 ms frame
+        private const val FLING_MIN_PX  = 1.5f    // stop threshold
     }
 
     var onEvent: ((ControlEvent) -> Unit)? = null
-    var sensitivity: Float = 2.0f
+    var sensitivity: Float = 1.2f   // reduced from 2.0 — smoother cursor feel
     /** When true, long-press + drag = drag.  When false, all single-finger moves are plain moves. */
     var dragLockEnabled: Boolean = false
 
     private val dp             = context.resources.displayMetrics.density
     private val tapMovePx      = TAP_MOVE_DP  * dp
-    private val scrollTickPx   = SCROLL_TICK_DP * dp
+    private val scrollTickPx   = 1f  // not used for scroll any more — kept for compile compat
     private val mfSwipePx      = MF_SWIPE_DP * dp
 
     // ── Drawing ───────────────────────────────────────────────────────────────
@@ -124,6 +146,23 @@ class TouchpadView @JvmOverloads constructor(
     private var tfLastSpan = 0f; private var tfLastAngle = 0f
     private var tfTotalMove = 0f
 
+    // Fling / momentum state (used after finger lift)
+    private var flingVelX   = 0f   // pixels per 16ms frame, traditional-scroll direction
+    private var flingVelY   = 0f
+    private val flingRunnable = object : Runnable {
+        override fun run() {
+            if (kotlin.math.abs(flingVelX) < FLING_MIN_PX && kotlin.math.abs(flingVelY) < FLING_MIN_PX) {
+                flingVelX = 0f; flingVelY = 0f; return
+            }
+            val px = flingVelX.toInt()
+            val py = flingVelY.toInt()
+            if (px != 0 || py != 0) onEvent?.invoke(ControlEvent.ScrollPixels(px, py))
+            flingVelX *= FLING_DECAY
+            flingVelY *= FLING_DECAY
+            postDelayed(this, 16)
+        }
+    }
+
     // Multi-finger (3/4/5)
     private var mfStartMidX = 0f; private var mfStartMidY = 0f
     private var mfStartSpan = 0f
@@ -140,6 +179,9 @@ class TouchpadView @JvmOverloads constructor(
                 longPressTime = gestureStart + LONG_PRESS_MS
                 sfStartX = ev.x; sfStartY = ev.y
                 sfLastX  = ev.x; sfLastY  = ev.y
+                // Stop any in-progress fling
+                removeCallbacks(flingRunnable)
+                flingVelX = 0f; flingVelY = 0f
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -151,6 +193,9 @@ class TouchpadView @JvmOverloads constructor(
                         midpoint(ev).let { (mx, my) -> tfLastMidX = mx; tfLastMidY = my }
                         tfLastSpan  = span2(ev)
                         tfLastAngle = angle2(ev)
+                        // Stop any in-progress fling and reset velocity
+                        removeCallbacks(flingRunnable)
+                        flingVelX = 0f; flingVelY = 0f
                         // Cancel drag if started
                         if (dragActive) { fireDragUp(); dragActive = false }
                     }
@@ -173,6 +218,14 @@ class TouchpadView @JvmOverloads constructor(
                 val remaining = count - 1
                 if (remaining < fingerCount) {
                     evaluatePointerUp(ev, fingerCount)
+                    // Launch momentum fling if we were scrolling
+                    if (fingerCount == 2 && tfMode == TwoMode.SCROLL) {
+                        removeCallbacks(flingRunnable)
+                        // Only start fling if velocity is meaningful
+                        if (kotlin.math.abs(flingVelX) > FLING_MIN_PX || kotlin.math.abs(flingVelY) > FLING_MIN_PX) {
+                            postDelayed(flingRunnable, 16)
+                        }
+                    }
                     fingerCount = remaining
                     if (remaining == 1) {
                         val idx = if (ev.actionIndex == 0) 1 else 0
@@ -198,6 +251,7 @@ class TouchpadView @JvmOverloads constructor(
 
             MotionEvent.ACTION_CANCEL -> {
                 if (dragActive) { fireDragUp(); dragActive = false; invalidate() }
+                removeCallbacks(flingRunnable); flingVelX = 0f; flingVelY = 0f
                 fingerCount = 0
             }
         }
@@ -236,18 +290,36 @@ class TouchpadView @JvmOverloads constructor(
 
         if (tfMode == TwoMode.UNDECIDED) {
             tfTotalMove += hypot(dMidX, dMidY)
-            if (tfTotalMove > scrollTickPx * 0.8f)  tfMode = TwoMode.SCROLL
-            else if (abs(dSpan) > scrollTickPx * 0.4f) tfMode = TwoMode.PINCH_ROTATE
+            // Use a smaller threshold (4 dp) so scroll mode engages quickly
+            val scrollThreshold = 4f * dp
+            if (tfTotalMove > scrollThreshold) {
+                tfMode = if (abs(dSpan) > tfTotalMove * 0.4f) TwoMode.PINCH_ROTATE
+                         else TwoMode.SCROLL
+            }
         }
 
         when (tfMode) {
             TwoMode.SCROLL -> {
-                // Natural scroll: finger down → content down → wheel -1
-                tfScrollX += dMidX; tfScrollY += dMidY
-                while (tfScrollY >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(-1)); tfScrollY -= scrollTickPx }
-                while (tfScrollY <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheel(+1)); tfScrollY += scrollTickPx }
-                while (tfScrollX >=  scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(-1)); tfScrollX -= scrollTickPx }
-                while (tfScrollX <= -scrollTickPx) { onEvent?.invoke(ControlEvent.MouseWheelH(+1)); tfScrollX += scrollTickPx }
+                // ── Velocity-proportional scroll ───────────────────────────────────
+                // DIRECTION: traditional scroll (same as un-checking Natural Scrolling).
+                //   finger DOWN (dMidY > 0)  → content scrolls UP   → wheel1 > 0 on Mac
+                //   finger UP   (dMidY < 0)  → content scrolls DOWN → wheel1 < 0 on Mac
+                //
+                // ScrollPixels(x, y) → Mac: wheel1=y (positive=up), wheel2=x
+                // So finger DOWN → dMidY > 0 → emit y = +positive → wheel1 > 0 → UP ✓
+                val pyRaw = dMidY * SCROLL_SCALE  // positive = finger down = content UP
+                val pxRaw = dMidX * SCROLL_SCALE
+
+                val pyI = pyRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+                val pxI = pxRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+
+                if (pyI != 0 || pxI != 0) {
+                    onEvent?.invoke(ControlEvent.ScrollPixels(pxI, pyI))
+                }
+
+                // Track velocity for fling (use raw float for smooth decay)
+                flingVelX = pxRaw * 0.9f   // slight smoothing
+                flingVelY = pyRaw * 0.9f
             }
             TwoMode.PINCH_ROTATE -> {
                 if (curSpan > 0 && abs(dSpan) > PINCH_MIN_DELTA * dp) {
@@ -301,20 +373,45 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     // ── Tap logic ─────────────────────────────────────────────────────────────
+    //
+    // Real Mac trackpad behaviour:
+    //   1 tap  → click  (clickCount=1)   normal press
+    //   2 taps → double (clickCount=2)   select word
+    //   3 taps → triple (clickCount=3)   select line / paragraph
+    //
+    // We track the last TWO taps to distinguish all three cases.
+    private var prevTapTime = 0L   // tap before lastTapTime
+    private var prevTapX    = 0f
+    private var prevTapY    = 0f
+
     private fun fireTap() {
         val now       = SystemClock.uptimeMillis()
-        val gapToLast = now - lastTapTime
-        val nearLast  = hypot(sfStartX - lastTapX, sfStartY - lastTapY) < tapMovePx * 3f
+        val gap1      = now - lastTapTime            // gap to most-recent tap
+        val gap2      = now - prevTapTime            // gap to second-most-recent tap
+        val near1     = hypot(sfStartX - lastTapX, sfStartY - lastTapY) < tapMovePx * 3f
+        val near2     = hypot(sfStartX - prevTapX,  sfStartY - prevTapY)  < tapMovePx * 3f
 
-        if (gapToLast < DOUBLE_TAP_MS && nearLast) {
-            // Real double-click: Mac needs clickCount=2, not two separate MC events.
-            onEvent?.invoke(ControlEvent.MouseDoubleClick(ControlEvent.Button.LEFT))
-            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
-            lastTapTime = 0L // reset so next tap doesn't triple-click
-        } else {
-            onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
-            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
-            lastTapTime = now; lastTapX = sfStartX; lastTapY = sfStartY
+        when {
+            // Triple-click: all three taps within DOUBLE_TAP_MS of each other
+            gap1 < DOUBLE_TAP_MS && near1 && gap2 < DOUBLE_TAP_MS * 2 && near2 && lastTapTime > 0L && prevTapTime > 0L -> {
+                onEvent?.invoke(ControlEvent.MouseTripleClick(ControlEvent.Button.LEFT))
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                prevTapTime = 0L; lastTapTime = 0L   // reset chain
+            }
+            // Double-click: within DOUBLE_TAP_MS of last tap
+            gap1 < DOUBLE_TAP_MS && near1 && lastTapTime > 0L -> {
+                onEvent?.invoke(ControlEvent.MouseDoubleClick(ControlEvent.Button.LEFT))
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                prevTapTime = lastTapTime; prevTapX = lastTapX; prevTapY = lastTapY
+                lastTapTime = now; lastTapX = sfStartX; lastTapY = sfStartY
+            }
+            // Single-click
+            else -> {
+                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.LEFT))
+                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+                prevTapTime = lastTapTime; prevTapX = lastTapX; prevTapY = lastTapY
+                lastTapTime = now; lastTapX = sfStartX; lastTapY = sfStartY
+            }
         }
     }
 

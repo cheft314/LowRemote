@@ -93,8 +93,17 @@ fun RemoteScreen(
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val screenHDp = with(density) { constraints.maxHeight.toDp() }
             val screenWDp = with(density) { constraints.maxWidth.toDp() }
-            val videoWDp  = (screenHDp * 1.6f).coerceAtMost(screenWDp)
-            val rightWDp  = screenWDp - videoWDp
+
+            // Compute video width from the actual remote screen's aspect ratio.
+            // Falls back to 16:10 until the first RESOLUTION message arrives.
+            val (remW, remH) = resolution ?: Pair(16, 10)
+            val ratio        = remW.toFloat() / remH.toFloat()
+            // Video fills full screen height; width = height × ratio, clamped so
+            // the right panel is at least 80 dp wide.
+            val minRightDp   = 80.dp
+            val maxVideoWDp  = screenWDp - minRightDp
+            val videoWDp     = (screenHDp * ratio).coerceAtMost(maxVideoWDp)
+            val rightWDp     = screenWDp - videoWDp
 
             CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -116,6 +125,7 @@ fun RemoteScreen(
                                     v.onSurfaceReady    = { s -> session.setSurface(s) }
                                     v.onSurfaceDestroyed = { session.setSurface(null) }
                                     v.onEvent = { ev -> session.sendEvent(ev) }
+                                    v.onFirstTouch = { drawerOpen = false }
                                 }
                             },
                             update = { v ->
@@ -320,9 +330,9 @@ private fun SessionDrawer(
                 DrawerSwitch("开启麦克风传输", audioOn, onToggleAudio)
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "开启后手机麦克风音频实时传至 Mac 并播放。\n" +
-                    "语音识别/Siri：在 Mac「系统设置→声音→输入」选择对应设备。\n" +
-                    "如需让微信等 App 收到声音，需配合 BlackHole 虚拟声卡做回环。",
+                    "开启后手机麦克风实时传至 Mac 播放（系统声音传输会自动暂停以防回声）。\n" +
+                    "要同时使用两者而不回声：Mac「系统设置→声音」将输入/输出设置为不同设备，\n" +
+                    "例如输出用 AirPods，输入用内置麦克风。",
                     color = Color(0xFF666666), fontSize = 10.sp,
                 )
             }

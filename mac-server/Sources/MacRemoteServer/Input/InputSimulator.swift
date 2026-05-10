@@ -157,11 +157,17 @@ final class InputSimulator {
     }
 
     private func scrollWheel(wheel1: Int32, wheel2: Int32) {
+        // 使用 .pixel 单位并放大倍数，确保滚动速度合理且方向正确。
+        // .line 单位每次只发 ±1 行，速度太慢；.pixel 单位可以直接控制像素偏移量。
+        // Android 传来的 wheel1/2 是 ±1（每个 tick），乘以 20 得到合理的像素速度。
+        // 注意：CGEventPost(.cghidEventTap) 注入的事件绕过了系统"自然滚动"翻转，
+        // 所以这里的符号就是最终效果：wheel1 > 0 = 内容向上滚。
+        let pixelMultiplier: Int32 = 20
         CGEvent(scrollWheelEvent2Source: nil,
-                units: .line,
+                units: .pixel,
                 wheelCount: 2,
-                wheel1: wheel1,
-                wheel2: wheel2,
+                wheel1: wheel1 * pixelMultiplier,
+                wheel2: wheel2 * pixelMultiplier,
                 wheel3: 0)?.post(tap: .cghidEventTap)
     }
 

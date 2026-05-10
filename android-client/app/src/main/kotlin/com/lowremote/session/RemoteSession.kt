@@ -145,12 +145,21 @@ class RemoteSession {
 
     // ── Audio ──────────────────────────────────────────────────────────────────
     /**
-     * Toggle microphone capture. When enabled, raw PCM from the mic is sent
-     * over UDP (type=0x03) to the Mac at 16 kHz mono 16-bit.
+     * Toggle microphone capture.
      *
-     * The Mac side does NOT yet play audio back — this is a stub that sends
-     * the data so the Mac server can pipe it to a virtual audio device later.
-     * For now it demonstrates the plumbing and the toggle UI works correctly.
+     * 当前实现说明：
+     * ─────────────────────────────────────────────────────────────────
+     * Android 端：开启后从麦克风捕获 16kHz / 16-bit / 单声道 PCM，
+     *   通过 UDP (type=0x03) 持续发送给 Mac。
+     *
+     * Mac 端（当前版本）：尚未接收/播放 PCM 音频数据。Mac 端如果要
+     *   实现语音输入，需要将接收到的 PCM 导入系统音频（例如通过
+     *   BlackHole 虚拟声卡或 AVAudioEngine），才能让 Mac 的语音识别
+     *   和其他应用使用手机麦克风。
+     *
+     * 因此：当前版本开启此功能后，手机麦克风音频发送到 Mac 但
+     *   Mac 端不处理，对微信语音、语音识别等没有效果。
+     *   这是一个功能存根，后续版本完善 Mac 端播放逻辑后才能完整使用。
      *
      * Note: RECORD_AUDIO permission must be granted before calling this.
      */

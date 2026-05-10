@@ -181,10 +181,28 @@ fun RemoteScreen(
         }
 
         // ── Right-side sliding drawer ─────────────────────────────────────────
+        // 注意 z-order：scrim 必须在抽屉之前渲染（Box 后来者在上），
+        // 否则 scrim 会遮住抽屉，抽屉所有触摸事件全部被 scrim 拦截。
+        // 正确顺序：① scrim（点击关闭） ② 抽屉（在最上层）
+
+        // ① 半透明遮罩 — 放在抽屉下层，只在抽屉外区域响应点击
+        if (drawerOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x55000000))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { drawerOpen = false },
+            )
+        }
+
+        // ② 抽屉本身 — 必须在 scrim 之后渲染，确保在最上层
         AnimatedVisibility(
-            visible = drawerOpen,
-            enter   = slideInHorizontally(tween(260)) { it },
-            exit    = slideOutHorizontally(tween(220)) { it },
+            visible  = drawerOpen,
+            enter    = slideInHorizontally(tween(260)) { it },
+            exit     = slideOutHorizontally(tween(220)) { it },
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             SessionDrawer(
@@ -200,8 +218,8 @@ fun RemoteScreen(
                 audioOn          = audioOn,
                 onChangeFps      = { session.changeFps(it) },
                 onSwitchScreen   = { session.switchScreen(it) },
-                onToggleMirror   = { mirrorLayout    = it },
-                onToggleFlip     = { flipVertical    = it },
+                onToggleMirror   = { mirrorLayout     = it },
+                onToggleFlip     = { flipVertical     = it },
                 onToggleVideoMode = { videoTouchscreen = it },
                 onToggleDragLock = { dragLockEnabled  = it },
                 onToggleAudio    = { on ->
@@ -217,19 +235,6 @@ fun RemoteScreen(
                 },
                 onDisconnect = { drawerOpen = false; onDisconnect() },
                 onClose      = { drawerOpen = false },
-            )
-        }
-
-        // Scrim behind drawer
-        if (drawerOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x55000000))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { drawerOpen = false },
             )
         }
     }
@@ -335,12 +340,14 @@ private fun SessionDrawer(
             }
 
             // Audio
-            DrawerSection("语音输入") {
-                DrawerSwitch("开启麦克风传输到Mac", audioOn, onToggleAudio)
+            DrawerSection("语音传输（实验性）") {
+                DrawerSwitch("开启麦克风传输", audioOn, onToggleAudio)
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "开启后手机麦克风音频将发送至 Mac，可用于语音识别/录音。\n需要麦克风权限。",
-                    color = Color(0xFF555555), fontSize = 10.sp,
+                    "⚠️ 当前版本：手机麦克风 PCM 数据已发送至 Mac，但 Mac 端尚未\n" +
+                    "接收播放，因此语音识别/微信录音等暂无效果。\n" +
+                    "后续版本接入 Mac 虚拟声卡后可完整使用。",
+                    color = Color(0xFF666666), fontSize = 10.sp,
                 )
             }
 

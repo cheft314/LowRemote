@@ -14,6 +14,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -72,8 +75,9 @@ fun ShortcutKeyboard(
                 onClick  = { onDragLock(!dragLockOn) },
             )
             // Mic toggle
+            // 注意：当前版本 Mac 端不处理音频，此功能为预留存根
             ToggleIconBtn(
-                label    = if (audioOn) "🎙️麦克风" else "麦克风",
+                label    = if (audioOn) "🎙️传音(实验)" else "🎙️传音",
                 active   = audioOn,
                 modifier = Modifier.weight(1f),
                 view     = rootView,
@@ -135,8 +139,11 @@ fun ShortcutKeyboard(
 // ── Inline IME input ──────────────────────────────────────────────────────────
 @Composable
 private fun InlineInputBar(onSend: (String) -> Unit) {
-    var text by remember { mutableStateOf("") }
-    // We use an AndroidView EditText so the IME focuses correctly on all API levels
+    // 使用 remember 保存 EditText 引用，直接读取其内容，
+    // 避免 Compose state 闭包捕获旧值导致发送空字符串的问题。
+    val editRef = remember { mutableStateOf<EditText?>(null) }
+    val onSendUpdated by rememberUpdatedState(onSend)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -148,43 +155,53 @@ private fun InlineInputBar(onSend: (String) -> Unit) {
         AndroidView(
             factory = { ctx2 ->
                 EditText(ctx2).apply {
-                    hint = "输入文字 → 发往 Mac"
+                    hint          = "输入文字 → 发往 Mac（回车发送）"
+                    inputType     = android.text.InputType.TYPE_CLASS_TEXT or
+                                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    imeOptions    = EditorInfo.IME_ACTION_SEND
                     setTextColor(0xFFFFFFFF.toInt())
                     setHintTextColor(0xFF666666.toInt())
-                    background = null
-                    inputType = InputType.TYPE_CLASS_TEXT or
-                            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    background    = null
+                    maxLines      = 1
+                    editRef.value = this
+
                     setOnEditorActionListener { _, actionId, _ ->
                         if (actionId == EditorInfo.IME_ACTION_SEND ||
                             actionId == EditorInfo.IME_ACTION_DONE) {
-                            onSend(text.toString())
-                            text.clear()
+                            val t = text.toString()
+                            if (t.isNotEmpty()) {
+                                onSendUpdated(t)
+                                setText("")
+                            }
                             true
                         } else false
                     }
-                    addTextChangedListener(object : android.text.TextWatcher {
-                        override fun afterTextChanged(s: android.text.Editable?) { text = s.toString() }
-                        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                    })
+
+                    // 自动弹出键盘
                     post {
                         requestFocus()
                         val imm = ctx2.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                            as InputMethodManager
+                                as InputMethodManager
                         imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
                     }
                 }
             },
             modifier = Modifier.weight(1f),
         )
+
+        // 手动发送按钮：直接读 EditText.text，不依赖 Compose state
         Button(
             onClick = {
-                onSend(text)
-                text = ""
+                val et   = editRef.value ?: return@Button
+                val text = et.text.toString()
+                if (text.isNotEmpty()) {
+                    onSendUpdated(text)
+                    et.setText("")
+                }
             },
-            colors = ButtonDefaults.buttonColors(
+            colors   = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF4A90E2), contentColor = Color.White),
-            shape  = RoundedCornerShape(5.dp),
+            shape    = RoundedCornerShape(5.dp),
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             modifier = Modifier.height(30.dp),
         ) { Text("发", fontSize = 11.sp) }

@@ -124,7 +124,13 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     // ── Touch state ───────────────────────────────────────────────────────────
-    private enum class TwoMode { UNDECIDED, SCROLL, PINCH_ROTATE }
+    //
+    // Two-finger gestures are ALWAYS either a tap (→ right-click) or a scroll.
+    // Pinch-zoom has been intentionally disabled because:
+    //   (a) in practice it fired inadvertently during normal two-finger scrolls,
+    //   (b) macOS has no reliable non-private API to inject magnify gestures,
+    //   (c) Android users can use ⌘+ / ⌘- in the shortcut panel instead.
+    private enum class TwoMode { UNDECIDED, SCROLL }
 
     private var fingerCount    = 0
     private var gestureStart   = 0L
@@ -292,59 +298,41 @@ class TouchpadView @JvmOverloads constructor(
     // ── Two finger ────────────────────────────────────────────────────────────
     private fun handleTwoMove(ev: MotionEvent) {
         val (midX, midY) = midpoint(ev)
-        val curSpan  = span2(ev)
-        val curAngle = angle2(ev)
         val dMidX    = midX - tfLastMidX
         val dMidY    = midY - tfLastMidY
-        val dSpan    = curSpan - tfLastSpan
-        val dAngle   = curAngle - tfLastAngle
 
         if (tfMode == TwoMode.UNDECIDED) {
             tfTotalMove += hypot(dMidX, dMidY)
-            // Use a smaller threshold (4 dp) so scroll mode engages quickly
+            // Engage scroll mode as soon as total midpoint travel exceeds 4 dp.
+            // From that point on we will NEVER fall back to a right-click tap
+            // even if the remaining movement is tiny — this prevents the
+            // "slow drag → right-click" false trigger.
             val scrollThreshold = 4f * dp
             if (tfTotalMove > scrollThreshold) {
-                tfMode = if (abs(dSpan) > tfTotalMove * 0.4f) TwoMode.PINCH_ROTATE
-                         else TwoMode.SCROLL
+                tfMode = TwoMode.SCROLL
             }
         }
 
-        when (tfMode) {
-            TwoMode.SCROLL -> {
-                // ── Velocity-proportional scroll ───────────────────────────────────
-                // DIRECTION: traditional scroll (same as un-checking Natural Scrolling).
-                //   finger DOWN (dMidY > 0)  → content scrolls UP   → wheel1 > 0 on Mac
-                //   finger UP   (dMidY < 0)  → content scrolls DOWN → wheel1 < 0 on Mac
-                //
-                // ScrollPixels(x, y) → Mac: wheel1=y (positive=up), wheel2=x
-                // So finger DOWN → dMidY > 0 → emit y = +positive → wheel1 > 0 → UP ✓
-                val pyRaw = dMidY * SCROLL_SCALE  // positive = finger down = content UP
-                val pxRaw = dMidX * SCROLL_SCALE
+        if (tfMode == TwoMode.SCROLL) {
+            // ── Velocity-proportional scroll ──────────────────────────────
+            // Traditional scroll direction: finger DOWN (dMidY>0) → content
+            // scrolls UP → wheel1 > 0 on Mac.
+            val pyRaw = dMidY * SCROLL_SCALE
+            val pxRaw = dMidX * SCROLL_SCALE
 
-                val pyI = pyRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
-                val pxI = pxRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+            val pyI = pyRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+            val pxI = pxRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
 
-                if (pyI != 0 || pxI != 0) {
-                    onEvent?.invoke(ControlEvent.ScrollPixels(pxI, pyI))
-                }
-
-                // Track velocity for fling (use raw float for smooth decay)
-                flingVelX = pxRaw * 0.9f   // slight smoothing
-                flingVelY = pyRaw * 0.9f
+            if (pyI != 0 || pxI != 0) {
+                onEvent?.invoke(ControlEvent.ScrollPixels(pxI, pyI))
             }
-            TwoMode.PINCH_ROTATE -> {
-                if (curSpan > 0 && abs(dSpan) > PINCH_MIN_DELTA * dp) {
-                    val s = dSpan / curSpan
-                    if (abs(s) > PINCH_MIN_DELTA) onEvent?.invoke(ControlEvent.Magnify(s))
-                }
-                val dRad = dAngle * (Math.PI / 180.0).toFloat()
-                if (abs(dRad) > 0.015f) onEvent?.invoke(ControlEvent.Rotate(dRad))
-            }
-            TwoMode.UNDECIDED -> {}
+
+            // Track velocity for fling
+            flingVelX = pxRaw * 0.9f
+            flingVelY = pyRaw * 0.9f
         }
 
         tfLastMidX = midX; tfLastMidY = midY
-        tfLastSpan  = curSpan; tfLastAngle = curAngle
     }
 
     // ── Multi-finger (3/4) ────────────────────────────────────────────────────
@@ -431,18 +419,36 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     // ── Pointer-up tap evaluation (2/3 finger) ────────────────────────────────
-    /** Returns true if a multi-finger tap event was fired. */
+    /**
+     * Returns true if a multi-finger tap event was fired.
+     *
+     * A two-finger TAP is defined strictly as:
+     *   • Gesture duration  < 180 ms            (fast)
+     *   • Total midpoint travel < 6 dp          (still)
+     *   • tfMode is still UNDECIDED              (never entered scroll)
+     *
+     * All three conditions MUST hold.  The previous logic used
+     * "UNDECIDED || totalMove < tapMovePx" which incorrectly fired a right
+     * click during any slow two-finger drag that happened to stay under
+     * the single-finger tap threshold — the exact scenario the user hit.
+     */
     private fun evaluatePointerUp(ev: MotionEvent, wasFingers: Int): Boolean {
         val elapsed = SystemClock.uptimeMillis() - gestureStart
-        if (elapsed > TAP_MS + 60) return false // small extra grace period for multi-touch
         return when (wasFingers) {
-            2 -> if (tfMode == TwoMode.UNDECIDED || tfTotalMove < tapMovePx) {
-                onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.RIGHT))
-                haptic(HapticFeedbackConstants.CONTEXT_CLICK)
-                // Clear tap chain so next single-tap isn't treated as double-click
-                lastTapTime = 0L; prevTapTime = 0L
-                true
-            } else false
+            2 -> {
+                val TWO_FINGER_TAP_MS = 180L
+                val TWO_FINGER_TAP_MOVE_DP = 6f
+                val tapMove = TWO_FINGER_TAP_MOVE_DP * dp
+                if (tfMode == TwoMode.UNDECIDED &&
+                    elapsed < TWO_FINGER_TAP_MS &&
+                    tfTotalMove < tapMove
+                ) {
+                    onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.RIGHT))
+                    haptic(HapticFeedbackConstants.CONTEXT_CLICK)
+                    lastTapTime = 0L; prevTapTime = 0L
+                    true
+                } else false
+            }
             // 3-finger tap: ignored (too easy to trigger accidentally)
             else -> false
         }

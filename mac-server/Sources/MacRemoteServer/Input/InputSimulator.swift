@@ -15,11 +15,6 @@ final class InputSimulator {
     // pauses off the main thread.
     private let textQueue = DispatchQueue(label: "LowRemote.InputSimulator.text")
 
-    // Accumulated pinch scale for Cmd+=/Cmd+- batching.
-    // Each magnify event only carries a small delta (~0.005); we batch until
-    // the accumulated change crosses a threshold then fire one keystroke.
-    private var pinchAccum: Float = 0
-
     /// Cache the last known cursor position for absolute-mode moves.
     /// Flip formula: CG_y = primaryScreenHeight - AppKit_y
     private func currentCursorCG() -> CGPoint {
@@ -180,28 +175,20 @@ final class InputSimulator {
     //   • 5-finger spread     → fn+F11 (Show Desktop)
     //   • 5-finger pinch      → Launchpad.app via NSWorkspace
 
-    /// Pinch-to-zoom.  We accumulate small scale deltas until they cross a
-    /// threshold, then fire a single Cmd+=/Cmd+- keystroke.  This is the
-    /// most reliable cross-app zoom mechanism — every Mac app that supports
-    /// zooming binds it to Cmd+Plus/Cmd+Minus.
+    // Pinch-to-zoom disabled — see handleEvent below.
+
+    /// Pinch-to-zoom is intentionally DISABLED.
+    ///
+    /// Reasons:
+    ///   • Two-finger scrolling and two-finger pinch are ambiguous on touch
+    ///     screens and reliably confusing the two on a remote pad caused the
+    ///     scroll gesture to sometimes fire a zoom instead.
+    ///   • macOS has no public API to inject real trackpad magnify events
+    ///     without crashing (NSEvent.otherEvent asserts on .magnify).
+    ///   • Users who want to zoom can use ⌘+ / ⌘- in the shortcut panel,
+    ///     which is unambiguous and app-universal.
     private func postMagnify(scale: Float) {
-        guard scale != 0 else { return }
-        pinchAccum += scale
-        // Threshold: every ~0.12 of accumulated scale fires one keystroke.
-        // This gives a smooth zoom that roughly matches native trackpad feel.
-        let threshold: Float = 0.12
-        while pinchAccum >= threshold {
-            // Cmd+=  (key code 24 is "=" on the US keyboard)
-            postKey(code: 24, down: true,  flags: .maskCommand)
-            postKey(code: 24, down: false, flags: .maskCommand)
-            pinchAccum -= threshold
-        }
-        while pinchAccum <= -threshold {
-            // Cmd+-  (key code 27 is "-")
-            postKey(code: 27, down: true,  flags: .maskCommand)
-            postKey(code: 27, down: false, flags: .maskCommand)
-            pinchAccum += threshold
-        }
+        _ = scale
     }
 
     private func postRotate(radians: Float) {
@@ -272,42 +259,79 @@ final class InputSimulator {
         ev.post(tap: .cghidEventTap)
     }
 
-    /// Inject Unicode text through CGEvent.
+    /// Inject text into whatever app currently has keyboard focus.
     ///
-    /// Dispatched to a dedicated SERIAL queue so that:
-    ///   1. Multiple rapid `T:` events are processed in order (no interleaving).
-    ///   2. The Thread.sleep pauses between chunks never block the main
-    ///      thread — which would otherwise stall every other UDP event.
+    /// Strategy: **paste from the clipboard**.
+    ///
+    /// We cannot use `CGEvent.keyboardSetUnicodeString` alone because it
+    /// bypasses the TextInput framework and is silently ignored by many
+    /// system-level text fields (Spotlight, Launchpad/App search, Finder
+    /// sidebar, Menu-bar search, Save-As dialog, some Electron apps…).
+    ///
+    /// Pasting via Cmd+V goes through the standard
+    /// `NSResponder -paste:` / `-readSelectionFromPasteboard:` chain which
+    /// every Mac text field implements, so it works universally.
+    ///
+    /// To avoid clobbering the user's clipboard we:
+    ///   1. Snapshot the current pasteboard contents
+    ///   2. Put our text on the pasteboard
+    ///   3. Post Cmd+V
+    ///   4. After ~250 ms (enough for the paste to complete) restore the
+    ///      original clipboard contents
+    ///
+    /// All work happens on the serial `textQueue` so successive T:
+    /// events are processed strictly in order.
     private func typeText(_ text: String) {
-        let utf16 = Array(text.utf16)
-        guard !utf16.isEmpty else { return }
+        guard !text.isEmpty else { return }
 
         textQueue.async {
-            let chunkSize = 8
-            var offset = 0
-            while offset < utf16.count {
-                let end   = min(offset + chunkSize, utf16.count)
-                let chunk = Array(utf16[offset..<end])
+            let pasteboard = NSPasteboard.general
 
-                func post(_ down: Bool) {
-                    guard let ev = CGEvent(keyboardEventSource: nil,
-                                          virtualKey: 0,
-                                          keyDown: down) else { return }
-                    chunk.withUnsafeBufferPointer { ptr in
-                        ev.keyboardSetUnicodeString(stringLength: chunk.count,
-                                                   unicodeString: ptr.baseAddress!)
+            // 1) Snapshot the current pasteboard items so we can restore them.
+            //    We copy `types → data` pairs — this captures text, rich text,
+            //    images, files etc. without mutating the originals.
+            let saved: [[NSPasteboard.PasteboardType: Data]] = pasteboard.pasteboardItems?.map { item in
+                var d: [NSPasteboard.PasteboardType: Data] = [:]
+                for t in item.types {
+                    if let data = item.data(forType: t) { d[t] = data }
+                }
+                return d
+            } ?? []
+
+            // 2) Replace pasteboard with our text only.
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+
+            // 3) Post Cmd+V on the main run loop (CGEvent is thread-safe but
+            //    the HID event tap delivery is cleanest from main).
+            DispatchQueue.main.async {
+                guard let dn = CGEvent(keyboardEventSource: nil,
+                                       virtualKey: 9, /* V */
+                                       keyDown: true) else { return }
+                dn.flags = .maskCommand
+                dn.post(tap: .cghidEventTap)
+
+                guard let up = CGEvent(keyboardEventSource: nil,
+                                       virtualKey: 9,
+                                       keyDown: false) else { return }
+                up.flags = .maskCommand
+                up.post(tap: .cghidEventTap)
+            }
+
+            // 4) Wait for the paste to be consumed, then restore the original
+            //    clipboard.  250 ms is conservative; most apps paste in <50 ms.
+            Thread.sleep(forTimeInterval: 0.25)
+
+            pasteboard.clearContents()
+            if !saved.isEmpty {
+                let items: [NSPasteboardItem] = saved.map { dict in
+                    let item = NSPasteboardItem()
+                    for (t, data) in dict {
+                        item.setData(data, forType: t)
                     }
-                    ev.post(tap: .cghidEventTap)
+                    return item
                 }
-
-                post(true)
-                post(false)
-                offset = end
-
-                if offset < utf16.count {
-                    // 15 ms between chunks — HID event queue drains cleanly.
-                    Thread.sleep(forTimeInterval: 0.015)
-                }
+                pasteboard.writeObjects(items)
             }
         }
     }

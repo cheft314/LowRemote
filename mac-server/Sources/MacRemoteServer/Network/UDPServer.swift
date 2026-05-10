@@ -27,6 +27,8 @@ final class UDPServer {
 
     var onControlEvent: ((ControlEvent) -> Void)?
     var onFirstPacketFromClient: ((String, UInt16) -> Void)?
+    /// Called on the UDPServer's GCD queue with raw PCM bytes (16 kHz, mono, 16-bit LE).
+    var onAudioData: ((Data) -> Void)?
 
     private var knownClientKey: String?
 
@@ -125,19 +127,27 @@ final class UDPServer {
 
     private func handlePacket(_ data: Data) {
         guard let parsed = Packet.parse(data) else { return }
-        guard parsed.type == Packet.typeControl else { return }
-        guard let str = String(data: parsed.payload, encoding: .utf8) else { return }
 
-        NSLog("[UDPServer] control event raw: '\(str)'")
+        switch parsed.type {
+        case Packet.typeControl:
+            guard let str = String(data: parsed.payload, encoding: .utf8) else { return }
+            NSLog("[UDPServer] control event raw: '\(str)'")
+            guard let event = ControlEvent.parse(str) else {
+                NSLog("[UDPServer] ControlEvent.parse failed for: '\(str)'")
+                return
+            }
+            // Dispatch CGEvent injection on main thread — required for accessibility API
+            DispatchQueue.main.async { [weak self] in
+                self?.onControlEvent?(event)
+            }
 
-        guard let event = ControlEvent.parse(str) else {
-            NSLog("[UDPServer] ControlEvent.parse failed for: '\(str)'")
-            return
-        }
+        case Packet.typeAudio:
+            // Hand raw PCM bytes directly to the audio receiver on its own queue.
+            // No main-thread dispatch needed — AVAudioEngine scheduling is thread-safe.
+            onAudioData?(parsed.payload)
 
-        // Dispatch CGEvent injection on main thread — required for accessibility API
-        DispatchQueue.main.async { [weak self] in
-            self?.onControlEvent?(event)
+        default:
+            break
         }
     }
 

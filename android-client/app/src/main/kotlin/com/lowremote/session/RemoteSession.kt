@@ -145,64 +145,86 @@ class RemoteSession {
 
     // ── Audio ──────────────────────────────────────────────────────────────────
     /**
-     * Toggle microphone capture.
+     * Toggle microphone capture and streaming to Mac.
      *
-     * 当前实现说明：
-     * ─────────────────────────────────────────────────────────────────
-     * Android 端：开启后从麦克风捕获 16kHz / 16-bit / 单声道 PCM，
-     *   通过 UDP (type=0x03) 持续发送给 Mac。
-     *
-     * Mac 端（当前版本）：尚未接收/播放 PCM 音频数据。Mac 端如果要
-     *   实现语音输入，需要将接收到的 PCM 导入系统音频（例如通过
-     *   BlackHole 虚拟声卡或 AVAudioEngine），才能让 Mac 的语音识别
-     *   和其他应用使用手机麦克风。
-     *
-     * 因此：当前版本开启此功能后，手机麦克风音频发送到 Mac 但
-     *   Mac 端不处理，对微信语音、语音识别等没有效果。
-     *   这是一个功能存根，后续版本完善 Mac 端播放逻辑后才能完整使用。
+     * Protocol:
+     *   1. Android sends TCP "AUDIO_ON"  → Mac starts AVAudioEngine playback
+     *   2. Android streams raw PCM chunks over UDP (type=0x03)
+     *      Format: 16 000 Hz, mono, 16-bit signed little-endian, ~20 ms chunks
+     *   3. Mac plays PCM through its default output device.
+     *      All apps that read from the default *input* will NOT hear this directly;
+     *      the audio comes out of the speakers/headphones.
+     *      To route it as a microphone input you need a loopback virtual device
+     *      (e.g. BlackHole 2ch) set as both output + input in Audio MIDI Setup.
+     *      For **dictation / Siri / speech recognition** on macOS, set the Mac's
+     *      System Settings → Sound → Input to the same virtual device.
      *
      * Note: RECORD_AUDIO permission must be granted before calling this.
      */
     fun setAudioEnabled(enabled: Boolean) {
         if (enabled == _audioEnabled.value) return
         _audioEnabled.value = enabled
-        if (enabled && _state.value == State.Connected) startAudioCapture()
-        else stopAudioCapture()
+        if (enabled && _state.value == State.Connected) {
+            tcp.send("AUDIO_ON")   // tell Mac to start AVAudioEngine
+            startAudioCapture()
+        } else {
+            stopAudioCapture()
+            if (_state.value == State.Connected) tcp.send("AUDIO_OFF")
+        }
     }
 
     private fun startAudioCapture() {
         stopAudioCapture()
-        val sampleRate  = 16_000
-        val bufSize     = AudioRecord.getMinBufferSize(sampleRate,
-            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2
-        val rec = try {
-            AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
-        } catch (e: Exception) { Log.w(TAG, "AudioRecord failed: ${e.message}"); return }
+        // Must match Mac AudioReceiver exactly:
+        //   sampleRate = 16 000 Hz
+        //   channels   = mono (1)
+        //   encoding   = PCM 16-bit signed little-endian
+        val sampleRate = 16_000
+        val channelConfig = AudioFormat.CHANNEL_IN_MONO
+        val encoding = AudioFormat.ENCODING_PCM_16BIT
 
-        if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return }
+        // Use ~20 ms chunks: 16000 samples/s * 0.02 s * 2 bytes = 640 bytes.
+        // getMinBufferSize is a lower bound; we use 4× to avoid underruns.
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
+        if (minBuf == AudioRecord.ERROR_BAD_VALUE || minBuf <= 0) {
+            Log.w(TAG, "AudioRecord.getMinBufferSize failed"); return
+        }
+        val bufSize = maxOf(minBuf * 4, 1280) // at least 2 × 20ms frames
+
+        val rec = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate, channelConfig, encoding, bufSize
+            )
+        } catch (e: Exception) { Log.w(TAG, "AudioRecord ctor: ${e.message}"); return }
+
+        if (rec.state != AudioRecord.STATE_INITIALIZED) {
+            Log.w(TAG, "AudioRecord not initialized"); rec.release(); return
+        }
+
         rec.startRecording()
         audioRecord = rec
+        Log.d(TAG, "audio capture started: ${sampleRate} Hz mono 16-bit, buf=$bufSize")
 
         audioJob = scope.launch(Dispatchers.IO) {
-            val buf = ByteArray(bufSize)
+            // Each read delivers one chunk; we send it immediately.
+            // 20-ms read size keeps latency low while amortising UDP overhead.
+            val chunkBytes = (sampleRate / 50) * 2   // 20 ms × 2 bytes/sample = 640
+            val buf = ByteArray(chunkBytes)
             while (isActive && _audioEnabled.value) {
-                val read = rec.read(buf, 0, buf.size)
+                val read = rec.read(buf, 0, chunkBytes)
                 if (read > 0) {
-                    // Send PCM as a UDP packet with type byte 0x03
-                    // Frame format: same 10-byte header, type=0x03
-                    val packet = com.lowremote.model.Packet.encodeAudio(
-                        nextEventFrameId(), buf.copyOf(read))
+                    val packet = Packet.encodeAudio(nextEventFrameId(), buf.copyOf(read))
                     sender.send(packet)
                 }
             }
         }
-        Log.d(TAG, "audio capture started @ ${sampleRate}Hz")
     }
 
     private fun stopAudioCapture() {
         audioJob?.cancel(); audioJob = null
-        audioRecord?.apply { stop(); release() }; audioRecord = null
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        audioRecord?.release(); audioRecord = null
     }
 
     // ── Disconnect / Release ───────────────────────────────────────────────────
@@ -277,7 +299,9 @@ class RemoteSession {
     // ── Teardown ───────────────────────────────────────────────────────────────
     private suspend fun teardown() {
         heartbeatJob?.cancel(); heartbeatJob = null
+        if (_audioEnabled.value) tcp.send("AUDIO_OFF")
         stopAudioCapture()
+        _audioEnabled.value = false
         tcp.disconnect()
         receiver.stop()
         synchronized(decoderLock) { decoder?.stop(); decoder = null }

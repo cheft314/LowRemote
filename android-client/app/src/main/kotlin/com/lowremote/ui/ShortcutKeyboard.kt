@@ -75,9 +75,8 @@ fun ShortcutKeyboard(
                 onClick  = { onDragLock(!dragLockOn) },
             )
             // Mic toggle
-            // 注意：当前版本 Mac 端不处理音频，此功能为预留存根
             ToggleIconBtn(
-                label    = if (audioOn) "🎙️传音(实验)" else "🎙️传音",
+                label    = if (audioOn) "🎙️传音中" else "🎙️传音",
                 active   = audioOn,
                 modifier = Modifier.weight(1f),
                 view     = rootView,

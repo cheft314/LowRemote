@@ -340,13 +340,13 @@ private fun SessionDrawer(
             }
 
             // Audio
-            DrawerSection("语音传输（实验性）") {
+            DrawerSection("语音传输") {
                 DrawerSwitch("开启麦克风传输", audioOn, onToggleAudio)
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "⚠️ 当前版本：手机麦克风 PCM 数据已发送至 Mac，但 Mac 端尚未\n" +
-                    "接收播放，因此语音识别/微信录音等暂无效果。\n" +
-                    "后续版本接入 Mac 虚拟声卡后可完整使用。",
+                    "开启后手机麦克风音频实时传至 Mac 并播放。\n" +
+                    "语音识别/Siri：在 Mac「系统设置→声音→输入」选择对应设备。\n" +
+                    "如需让微信等 App 收到声音，需配合 BlackHole 虚拟声卡做回环。",
                     color = Color(0xFF666666), fontSize = 10.sp,
                 )
             }

@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import AVFoundation
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -21,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var frameIdCounter: UInt32 = 0
     /// Index of the display currently being streamed. 0 = main display.
     private var currentDisplayIndex: Int = 0
+    private var audioReceiver: AudioReceiver?
 
     // MARK: - Lifecycle
 
@@ -32,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopStreaming()
+        audioReceiver?.stop()
         tcpServer?.stop()
         udpServer?.stop()
         bonjour?.stop()
@@ -123,10 +126,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         tcpServer.start()
 
-        // UDP data server (receives control events, sends video)
+        // UDP data server (receives control events, audio PCM, sends video)
+        audioReceiver = AudioReceiver()
+
         udpServer = UDPServer(port: 8891)
         udpServer.onControlEvent = { [weak self] event in
             self?.inputSimulator.handleEvent(event)
+        }
+        udpServer.onAudioData = { [weak self] pcmData in
+            self?.audioReceiver?.onAudioData(pcmData)
         }
         udpServer.onFirstPacketFromClient = { [weak self] host, port in
             // Remember client's UDP endpoint so we know where to stream video to
@@ -189,6 +197,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if trimmed == "PING" {
             tcpServer.broadcast("PONG\n")
+        } else if trimmed == "AUDIO_ON" {
+            audioReceiver?.start()
+            tcpServer.broadcast("OK\n")
+        } else if trimmed == "AUDIO_OFF" {
+            audioReceiver?.stop()
+            tcpServer.broadcast("OK\n")
         } else if trimmed == "DISCONNECT" {
             stopStreaming()
             tcpServer.disconnectAll()

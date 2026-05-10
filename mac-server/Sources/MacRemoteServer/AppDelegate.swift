@@ -200,10 +200,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if trimmed == "PING" {
             tcpServer.broadcast("PONG\n")
         } else if trimmed == "AUDIO_ON" {
+            // ⚠️  Echo / howl prevention:
+            //
+            // AudioReceiver plays the Android mic through the Mac's speakers
+            // (or default output device).  AudioCaptureManager taps the Mac's
+            // audio INPUT.  If the input device is the same as (or can hear)
+            // the output — e.g. via BlackHole loopback, or simply because the
+            // built-in microphone picks up the speakers — the captured audio
+            // will contain the already-played mic audio, which is then sent
+            // BACK to Android, creating a feedback loop.
+            //
+            // Solution: pause system-audio capture while mic streaming is
+            // active.  The two features are mutually exclusive.
+            //
+            // If the user genuinely needs both simultaneously they should use
+            // a proper AEC (Acoustic Echo Cancellation) solution at the OS
+            // level, such as:
+            //   • System Settings → Sound → Input: choose a different device
+            //     from the output (e.g. AirPods as output, built-in as input).
+            //   • Use BlackHole + multi-output device but route them carefully
+            //     so the mic input device does NOT include the BlackHole loopback.
+            audioCapture?.stop()
+            audioCapture = nil
+            NSLog("[AudioEcho] System audio capture PAUSED while mic streaming is active")
             audioReceiver?.start()
             tcpServer.broadcast("OK\n")
         } else if trimmed == "AUDIO_OFF" {
             audioReceiver?.stop()
+            // Resume system audio capture now that mic streaming stopped
+            if screenCapture != nil {   // only if we're still streaming video
+                audioCapture = AudioCaptureManager()
+                audioCapture.onAudioBuffer = { [weak self] pcmData in
+                    self?.sendSystemAudio(pcmData)
+                }
+                audioCapture.start()
+                NSLog("[AudioEcho] System audio capture RESUMED after mic streaming stopped")
+            }
             tcpServer.broadcast("OK\n")
         } else if trimmed == "DISCONNECT" {
             stopStreaming()

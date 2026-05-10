@@ -330,9 +330,9 @@ private fun SessionDrawer(
                 DrawerSwitch("开启麦克风传输", audioOn, onToggleAudio)
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "开启后手机麦克风音频实时传至 Mac 并播放。\n" +
-                    "语音识别/Siri：在 Mac「系统设置→声音→输入」选择对应设备。\n" +
-                    "如需让微信等 App 收到声音，需配合 BlackHole 虚拟声卡做回环。",
+                    "开启后手机麦克风实时传至 Mac 播放（系统声音传输会自动暂停以防回声）。\n" +
+                    "要同时使用两者而不回声：Mac「系统设置→声音」将输入/输出设置为不同设备，\n" +
+                    "例如输出用 AirPods，输入用内置麦克风。",
                     color = Color(0xFF666666), fontSize = 10.sp,
                 )
             }

@@ -58,12 +58,27 @@ class TouchpadView @JvmOverloads constructor(
         private const val MF_SWIPE_DP       = 18f
 
         // ── Scroll tuning ──────────────────────────────────────────────────────
-        // Mac CGEvent uses .pixel units; each tick sent is SCROLL_PX pixels.
-        // Velocity-proportional: fast swipe → larger pixel value per event.
-        // Min speed = 1 dp/frame → MIN_SCROLL_PX;  Max = MAX_DP_PER_EVENT → MAX_SCROLL_PX.
-        private const val SCROLL_PX_PER_DP = 4.5f   // pixel amplification
-        private const val MIN_SCROLL_PX    = 4        // minimum pixels per event
-        private const val MAX_SCROLL_PX    = 120      // cap to prevent runaway
+        // Direct pixel scroll: each motion event emits a pixel magnitude that
+        // is proportional to how fast the fingers are moving (velocity-proportional).
+        //
+        // DIRECTION: traditional (non-natural) scroll — same as Mac "uncheck
+        // Natural Scrolling" or iOS UIScrollView default.
+        //   finger DOWN → content scrolls UP   (wheel1 > 0 on Mac)
+        //   finger UP   → content scrolls DOWN  (wheel1 < 0 on Mac)
+        //
+        // FORMULA: pixels = |delta_dp| × SCALE, clamped to MAX.
+        // Slower SCALE (2.5) gives more control and feels closer to the native
+        // Magic Trackpad speed on a retina display.
+        private const val SCROLL_SCALE  = 2.5f    // reduced from 4.5 — more control
+        private const val SCROLL_MAX_PX = 80       // cap per-frame
+
+        // ── Momentum / fling ────────────────────────────────────────────────────
+        // After lifting fingers we keep sending decaying scroll events to simulate
+        // the inertia that a real Mac trackpad produces.
+        // Each frame the velocity is multiplied by FLING_DECAY until it reaches
+        // FLING_MIN_PX, then stops.
+        private const val FLING_DECAY   = 0.82f   // friction per 16 ms frame
+        private const val FLING_MIN_PX  = 1.5f    // stop threshold
     }
 
     var onEvent: ((ControlEvent) -> Unit)? = null
@@ -131,6 +146,23 @@ class TouchpadView @JvmOverloads constructor(
     private var tfLastSpan = 0f; private var tfLastAngle = 0f
     private var tfTotalMove = 0f
 
+    // Fling / momentum state (used after finger lift)
+    private var flingVelX   = 0f   // pixels per 16ms frame, traditional-scroll direction
+    private var flingVelY   = 0f
+    private val flingRunnable = object : Runnable {
+        override fun run() {
+            if (kotlin.math.abs(flingVelX) < FLING_MIN_PX && kotlin.math.abs(flingVelY) < FLING_MIN_PX) {
+                flingVelX = 0f; flingVelY = 0f; return
+            }
+            val px = flingVelX.toInt()
+            val py = flingVelY.toInt()
+            if (px != 0 || py != 0) onEvent?.invoke(ControlEvent.ScrollPixels(px, py))
+            flingVelX *= FLING_DECAY
+            flingVelY *= FLING_DECAY
+            postDelayed(this, 16)
+        }
+    }
+
     // Multi-finger (3/4/5)
     private var mfStartMidX = 0f; private var mfStartMidY = 0f
     private var mfStartSpan = 0f
@@ -147,6 +179,9 @@ class TouchpadView @JvmOverloads constructor(
                 longPressTime = gestureStart + LONG_PRESS_MS
                 sfStartX = ev.x; sfStartY = ev.y
                 sfLastX  = ev.x; sfLastY  = ev.y
+                // Stop any in-progress fling
+                removeCallbacks(flingRunnable)
+                flingVelX = 0f; flingVelY = 0f
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -158,6 +193,9 @@ class TouchpadView @JvmOverloads constructor(
                         midpoint(ev).let { (mx, my) -> tfLastMidX = mx; tfLastMidY = my }
                         tfLastSpan  = span2(ev)
                         tfLastAngle = angle2(ev)
+                        // Stop any in-progress fling and reset velocity
+                        removeCallbacks(flingRunnable)
+                        flingVelX = 0f; flingVelY = 0f
                         // Cancel drag if started
                         if (dragActive) { fireDragUp(); dragActive = false }
                     }
@@ -180,6 +218,14 @@ class TouchpadView @JvmOverloads constructor(
                 val remaining = count - 1
                 if (remaining < fingerCount) {
                     evaluatePointerUp(ev, fingerCount)
+                    // Launch momentum fling if we were scrolling
+                    if (fingerCount == 2 && tfMode == TwoMode.SCROLL) {
+                        removeCallbacks(flingRunnable)
+                        // Only start fling if velocity is meaningful
+                        if (kotlin.math.abs(flingVelX) > FLING_MIN_PX || kotlin.math.abs(flingVelY) > FLING_MIN_PX) {
+                            postDelayed(flingRunnable, 16)
+                        }
+                    }
                     fingerCount = remaining
                     if (remaining == 1) {
                         val idx = if (ev.actionIndex == 0) 1 else 0
@@ -205,6 +251,7 @@ class TouchpadView @JvmOverloads constructor(
 
             MotionEvent.ACTION_CANCEL -> {
                 if (dragActive) { fireDragUp(); dragActive = false; invalidate() }
+                removeCallbacks(flingRunnable); flingVelX = 0f; flingVelY = 0f
                 fingerCount = 0
             }
         }
@@ -253,30 +300,26 @@ class TouchpadView @JvmOverloads constructor(
 
         when (tfMode) {
             TwoMode.SCROLL -> {
-                // ── Velocity-proportional natural scroll ───────────────────────
-                // "Natural scroll": finger moves DOWN → content moves DOWN.
-                // On Mac: wheel1 > 0 = scroll UP, wheel1 < 0 = scroll DOWN.
-                // So finger down (dMidY > 0) → wheel1 < 0  (content down).
-                // Invert dMidY to get the direction the wheel needs to go,
-                // then scale by dp density to get a pixel magnitude.
+                // ── Velocity-proportional scroll ───────────────────────────────────
+                // DIRECTION: traditional scroll (same as un-checking Natural Scrolling).
+                //   finger DOWN (dMidY > 0)  → content scrolls UP   → wheel1 > 0 on Mac
+                //   finger UP   (dMidY < 0)  → content scrolls DOWN → wheel1 < 0 on Mac
                 //
-                // We do NOT use accumulator+threshold ticks; instead we
-                // compute the pixel value directly from the finger delta and
-                // pass it to the Mac CGEvent (which accepts pixel units).
-                // This gives smooth, velocity-proportional scrolling.
-                val scrollPxY = dMidY * SCROLL_PX_PER_DP   // positive = finger down = content down
-                val scrollPxX = dMidX * SCROLL_PX_PER_DP
+                // ScrollPixels(x, y) → Mac: wheel1=y (positive=up), wheel2=x
+                // So finger DOWN → dMidY > 0 → emit y = +positive → wheel1 > 0 → UP ✓
+                val pyRaw = dMidY * SCROLL_SCALE  // positive = finger down = content UP
+                val pxRaw = dMidX * SCROLL_SCALE
 
-                if (kotlin.math.abs(scrollPxY) >= 0.5f || kotlin.math.abs(scrollPxX) >= 0.5f) {
-                    val pyI = scrollPxY.toInt().let { if (it == 0 && scrollPxY > 0) 1 else if (it == 0 && scrollPxY < 0) -1 else it }
-                        .coerceIn(-MAX_SCROLL_PX, MAX_SCROLL_PX)
-                    val pxI = scrollPxX.toInt().let { if (it == 0 && scrollPxX > 0) 1 else if (it == 0 && scrollPxX < 0) -1 else it }
-                        .coerceIn(-MAX_SCROLL_PX, MAX_SCROLL_PX)
-                    // Emit as pixel-valued wheel events.
-                    // wheel1: vertical — negative = scroll down (natural: finger down → content down)
-                    if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, -pyI))
-                    if (pxI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(-pxI, 0))
+                val pyI = pyRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+                val pxI = pxRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+
+                if (pyI != 0 || pxI != 0) {
+                    onEvent?.invoke(ControlEvent.ScrollPixels(pxI, pyI))
                 }
+
+                // Track velocity for fling (use raw float for smooth decay)
+                flingVelX = pxRaw * 0.9f   // slight smoothing
+                flingVelY = pyRaw * 0.9f
             }
             TwoMode.PINCH_ROTATE -> {
                 if (curSpan > 0 && abs(dSpan) > PINCH_MIN_DELTA * dp) {

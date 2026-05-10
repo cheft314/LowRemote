@@ -199,12 +199,12 @@ class VideoTouchView @JvmOverloads constructor(
         val dX = mx - tfMidX; val dY = my - tfMidY
         tfMidX = mx; tfMidY = my
 
-        // Velocity-proportional natural scroll — same logic as TouchpadView.
-        // Natural: finger down (dY > 0) → content moves down → wheel1 < 0.
-        val SCALE = 4.5f
-        val MAX   = 120
-        val pyI = (-dY * SCALE).toInt().coerceIn(-MAX, MAX)
-        val pxI = (-dX * SCALE).toInt().coerceIn(-MAX, MAX)
+        // Velocity-proportional scroll — same direction as TouchpadView.
+        // Traditional: finger down → content scrolls UP → pyI > 0 → wheel1 > 0 on Mac.
+        val SCALE = 2.5f
+        val MAX   = 80
+        val pyI = (dY * SCALE).toInt().coerceIn(-MAX, MAX)
+        val pxI = (dX * SCALE).toInt().coerceIn(-MAX, MAX)
         if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, pyI))
         if (pxI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(pxI, 0))
 

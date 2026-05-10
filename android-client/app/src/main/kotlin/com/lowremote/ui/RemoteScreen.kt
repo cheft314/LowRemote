@@ -1,356 +1,448 @@
 package com.lowremote.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.text.InputType
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import com.lowremote.model.ControlEvent
 import com.lowremote.session.RemoteSession
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REMOTE SCREEN
+// ═══════════════════════════════════════════════════════════════════════════
 /**
- * 主控制界面 — 零 Header 全屏，充分利用挖孔屏每一像素。
+ * 主控制界面 — 全屏零 Header。
  *
- * 布局（横屏）：
+ * 布局：左侧视频区（height × 1.6），右侧控制区（剩余宽度）。
+ * 按返回键：向右滑入抽屉（占屏幕约 50% 宽），再按返回收回抽屉。
  *
- *   ┌──────────────────────────────┬────────────────────┐
- *   │  VideoTouchView              │  ShortcutKeyboard  │
- *   │  高 = 全屏高（含挖孔区）      │  (剩余高度)         │
- *   │  宽 = 高 × 1.6               ├────────────────────┤
- *   │                              │  TouchpadView      │
- *   │  [触屏/触控板 可切换]         │  宽满, 高=宽÷1.6   │
- *   └──────────────────────────────┴────────────────────┘
- *
- * 横向反转：将 Row 的 LayoutDirection 翻转，视频在右、控制面板在左。
- * 挖孔屏：fillMaxSize() + LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES（在 MainActivity 设置），
- *   视频区故意绘制到挖孔区域（挖孔在视频里几乎不可察），控制区不会被遮挡（挖孔在屏幕另一侧）。
- *
- * 返回键 → 弹出半透明菜单，包含：
- *   • 连接状态 / 分辨率
- *   • FPS 切换
- *   • 视频区模式切换（触屏 / 触控板）
- *   • 横向反转开关
- *   • 断开按钮
+ * 抽屉布局：
+ *   • 顶部置顶：当前分辨率 + 断开按钮
+ *   • 可滚动设置区：屏幕切换 / 帧率 / 视频模式 / 布局 / 音频 / 文字输入 / 拖拽锁
  */
 @Composable
 fun RemoteScreen(
     session: RemoteSession,
     onDisconnect: () -> Unit,
 ) {
-    val fps        by session.fps.collectAsState()
-    val resolution by session.remoteResolution.collectAsState()
-    val state      by session.state.collectAsState()
+    val fps         by session.fps.collectAsState()
+    val resolution  by session.remoteResolution.collectAsState()
+    val state       by session.state.collectAsState()
+    val screens     by session.screens.collectAsState()
+    val curScreen   by session.currentScreen.collectAsState()
+    val audioOn     by session.audioEnabled.collectAsState()
 
-    // ── Persistent UI preferences (survive recomposition) ────────────────────
-    var showMenu        by remember { mutableStateOf(false) }
-    var mirrorLayout    by remember { mutableStateOf(false) }   // horizontal flip
-    var videoTouchscreen by remember { mutableStateOf(true) }   // touchscreen vs trackpad
+    // ── Persistent prefs ──────────────────────────────────────────────────────
+    var drawerOpen       by remember { mutableStateOf(false) }
+    var mirrorLayout     by remember { mutableStateOf(false) }   // swap L↔R
+    var flipVertical     by remember { mutableStateOf(false) }   // 180° rotate
+    var videoTouchscreen by remember { mutableStateOf(true) }
+    var dragLockEnabled  by remember { mutableStateOf(false) }
 
-    BackHandler { showMenu = true }
-
-    // Keep a stable reference to VideoTouchView so we can update its mode.
-    val videoViewRef = remember { mutableStateOf<VideoTouchView?>(null) }
-    LaunchedEffect(videoTouchscreen) {
-        videoViewRef.value?.touchscreenMode = videoTouchscreen
+    // Back key: open drawer if closed, close if open
+    BackHandler(enabled = true) {
+        if (drawerOpen) drawerOpen = false else drawerOpen = true
     }
 
-    // Mirror the entire Row by reversing LayoutDirection
-    val layoutDir = if (mirrorLayout) LayoutDirection.Rtl else LayoutDirection.Ltr
+    // ── Permission launcher for mic ────────────────────────────────────────────
+    val ctx = LocalContext.current
+    val audioPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) session.setAudioEnabled(true) }
 
-    BoxWithConstraints(
+    // ── Layout ────────────────────────────────────────────────────────────────
+    val density   = LocalDensity.current
+    val layoutDir = if (mirrorLayout) LayoutDirection.Rtl else LayoutDirection.Ltr
+    val videoViewRef = remember { mutableStateOf<VideoTouchView?>(null) }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            // Consume ALL insets: draw under status-bar, nav-bar, and cutout
-            .windowInsetsPadding(WindowInsets(0, 0, 0, 0)),
+            .then(if (flipVertical) Modifier.rotate(180f) else Modifier),
     ) {
-        val density   = LocalDensity.current
-        val screenHDp = with(density) { constraints.maxHeight.toDp() }
-        val screenWDp = with(density) { constraints.maxWidth.toDp() }
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val screenHDp = with(density) { constraints.maxHeight.toDp() }
+            val screenWDp = with(density) { constraints.maxWidth.toDp() }
+            val videoWDp  = (screenHDp * 1.6f).coerceAtMost(screenWDp)
+            val rightWDp  = screenWDp - videoWDp
 
-        // Left column: video — height fills screen, width = height × 1.6
-        val videoWDp  = (screenHDp * 1.6f).coerceAtMost(screenWDp)
-        val rightWDp  = screenWDp - videoWDp
-
-        CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
-            Row(modifier = Modifier.fillMaxSize()) {
-
-                // ── Video area ────────────────────────────────────────────────
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(videoWDp)
-                        .background(Color.Black),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            VideoTouchView(ctx).also { v ->
-                                videoViewRef.value = v
-                                v.touchscreenMode = videoTouchscreen
-                                resolution?.let { (w, h) ->
-                                    v.targetAspectWidth  = w
-                                    v.targetAspectHeight = h
-                                }
-                                v.onSurfaceReady    = { s -> session.setSurface(s) }
-                                v.onSurfaceDestroyed = { session.setSurface(null) }
-                                v.onEvent = { ev -> session.sendEvent(ev) }
-                            }
-                        },
-                        update = { v ->
-                            v.touchscreenMode = videoTouchscreen
-                            resolution?.let { (w, h) ->
-                                if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
-                                    v.targetAspectWidth  = w
-                                    v.targetAspectHeight = h
-                                    v.requestLayout()
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-
-                    // Touch-mode indicator badge (top corner)
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    // ── Video ─────────────────────────────────────────────────
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .background(
-                                color = if (videoTouchscreen) Color(0x884A90E2) else Color(0x88333333),
-                                shape = RoundedCornerShape(4.dp),
-                            )
-                            .clickable { videoTouchscreen = !videoTouchscreen }
-                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        modifier = Modifier.fillMaxHeight().width(videoWDp).background(Color.Black),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = if (videoTouchscreen) "触屏" else "触控板",
-                            color = Color.White,
-                            fontSize = 10.sp,
+                        AndroidView(
+                            factory = { c ->
+                                VideoTouchView(c).also { v ->
+                                    videoViewRef.value = v
+                                    v.touchscreenMode  = videoTouchscreen
+                                    v.dragLockEnabled  = dragLockEnabled
+                                    resolution?.let { (w, h) ->
+                                        v.targetAspectWidth  = w
+                                        v.targetAspectHeight = h
+                                    }
+                                    v.onSurfaceReady    = { s -> session.setSurface(s) }
+                                    v.onSurfaceDestroyed = { session.setSurface(null) }
+                                    v.onEvent = { ev -> session.sendEvent(ev) }
+                                }
+                            },
+                            update = { v ->
+                                v.touchscreenMode = videoTouchscreen
+                                v.dragLockEnabled  = dragLockEnabled
+                                resolution?.let { (w, h) ->
+                                    if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
+                                        v.targetAspectWidth  = w
+                                        v.targetAspectHeight = h
+                                        v.requestLayout()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
-                }
 
-                // ── Right control panel ───────────────────────────────────────
-                Column(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(rightWDp)
-                        .background(Color(0xFF111111)),
-                ) {
-                    ShortcutKeyboard(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        onEvent  = { ev -> session.sendEvent(ev) },
-                    )
-                    AndroidView(
-                        factory = { ctx ->
-                            TouchpadView(ctx).apply {
-                                setBackgroundColor(0xFF1A1A1A.toInt())
-                                onEvent = { ev: ControlEvent -> session.sendEvent(ev) }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // ── Right control panel ───────────────────────────────────
+                    Column(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(rightWDp)
+                            .background(Color(0xFF111111)),
+                    ) {
+                        ShortcutKeyboard(
+                            modifier      = Modifier.fillMaxWidth().weight(1f),
+                            onEvent       = { ev -> session.sendEvent(ev) },
+                            dragLockOn    = dragLockEnabled,
+                            onDragLock    = { dragLockEnabled = it },
+                            audioOn       = audioOn,
+                            onAudio       = { on ->
+                                if (on) {
+                                    if (ContextCompat.checkSelfPermission(ctx,
+                                            Manifest.permission.RECORD_AUDIO) ==
+                                        PackageManager.PERMISSION_GRANTED) {
+                                        session.setAudioEnabled(true)
+                                    } else {
+                                        audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                } else {
+                                    session.setAudioEnabled(false)
+                                }
+                            },
+                            onSendText    = { text -> session.sendEvent(ControlEvent.TypeText(text)) },
+                        )
+                        AndroidView(
+                            factory = { c ->
+                                TouchpadView(c).apply {
+                                    setBackgroundColor(0xFF1A1A1A.toInt())
+                                    this.dragLockEnabled = dragLockEnabled
+                                    onEvent = { ev: ControlEvent -> session.sendEvent(ev) }
+                                }
+                            },
+                            update = { v -> v.dragLockEnabled = dragLockEnabled },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
 
-        // ── Back-key menu overlay ─────────────────────────────────────────────
-        if (showMenu) {
-            SessionMenuDialog(
+        // ── Right-side sliding drawer ─────────────────────────────────────────
+        AnimatedVisibility(
+            visible = drawerOpen,
+            enter   = slideInHorizontally(tween(260)) { it },
+            exit    = slideOutHorizontally(tween(220)) { it },
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            SessionDrawer(
                 fps              = fps,
                 state            = state,
                 resolution       = resolution,
+                screens          = screens,
+                curScreen        = curScreen,
                 mirrorLayout     = mirrorLayout,
+                flipVertical     = flipVertical,
                 videoTouchscreen = videoTouchscreen,
+                dragLockEnabled  = dragLockEnabled,
+                audioOn          = audioOn,
                 onChangeFps      = { session.changeFps(it) },
-                onToggleMirror   = { mirrorLayout = it },
+                onSwitchScreen   = { session.switchScreen(it) },
+                onToggleMirror   = { mirrorLayout    = it },
+                onToggleFlip     = { flipVertical    = it },
                 onToggleVideoMode = { videoTouchscreen = it },
-                onDisconnect = {
-                    showMenu = false
-                    onDisconnect()
+                onToggleDragLock = { dragLockEnabled  = it },
+                onToggleAudio    = { on ->
+                    if (on) {
+                        if (ContextCompat.checkSelfPermission(ctx,
+                                Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+                            session.setAudioEnabled(true)
+                        else
+                            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        session.setAudioEnabled(false)
+                    }
                 },
-                onDismiss = { showMenu = false },
+                onDisconnect = { drawerOpen = false; onDisconnect() },
+                onClose      = { drawerOpen = false },
+            )
+        }
+
+        // Scrim behind drawer
+        if (drawerOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x55000000))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { drawerOpen = false },
             )
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 菜单弹窗（返回键触发）
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════════════════
+// SESSION DRAWER  (slides in from the right, takes ~50% screen width)
+// ═══════════════════════════════════════════════════════════════════════════
 @Composable
-private fun SessionMenuDialog(
+private fun SessionDrawer(
     fps: Int,
     state: RemoteSession.State,
     resolution: Pair<Int, Int>?,
+    screens: List<RemoteSession.ScreenInfo>,
+    curScreen: Int,
     mirrorLayout: Boolean,
+    flipVertical: Boolean,
     videoTouchscreen: Boolean,
+    dragLockEnabled: Boolean,
+    audioOn: Boolean,
     onChangeFps: (Int) -> Unit,
+    onSwitchScreen: (Int) -> Unit,
     onToggleMirror: (Boolean) -> Unit,
+    onToggleFlip: (Boolean) -> Unit,
     onToggleVideoMode: (Boolean) -> Unit,
+    onToggleDragLock: (Boolean) -> Unit,
+    onToggleAudio: (Boolean) -> Unit,
     onDisconnect: () -> Unit,
-    onDismiss: () -> Unit,
+    onClose: () -> Unit,
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .fillMaxWidth(0.5f)
+            .background(Color(0xF0141414))
+            // Always use LTR inside the drawer regardless of mirror setting
+            .then(Modifier),
     ) {
-        Box(
+        // ── PINNED TOP: status + disconnect ───────────────────────────────────
+        DrawerTopBar(
+            state      = state,
+            resolution = resolution,
+            onDisconnect = onDisconnect,
+        )
+
+        HorizontalDivider(color = Color(0xFF2A2A2A))
+
+        // ── SCROLLABLE SETTINGS ───────────────────────────────────────────────
+        Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xAA000000))
-                .clickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center,
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .width(280.dp)
-                    .background(Color(0xFF1E1E1E), RoundedCornerShape(14.dp))
-                    .clickable { /* consume */ }
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                // ── Status ────────────────────────────────────────────────────
-                Text(
-                    text = if (state == RemoteSession.State.Connected) "● 已连接" else "○ 未连接",
-                    color = if (state == RemoteSession.State.Connected) Color(0xFF4CAF50) else Color(0xFFB0B0B0),
-                    fontSize = 14.sp,
-                )
-                resolution?.let { (w, h) ->
-                    Spacer(Modifier.height(3.dp))
-                    Text("${w}×${h}", color = Color(0xFF666666), fontSize = 11.sp)
-                }
-
-                Spacer(Modifier.height(16.dp))
-                Divider(color = Color(0xFF2D2D2D))
-                Spacer(Modifier.height(14.dp))
-
-                // ── FPS ───────────────────────────────────────────────────────
-                MenuSectionLabel("帧率")
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(30, 60, 120).forEach { f ->
-                        ToggleButton(
-                            label = "${f}fps",
-                            active = f == fps,
-                            onClick = { onChangeFps(f); onDismiss() },
+            // Screens
+            if (screens.isNotEmpty()) {
+                DrawerSection("屏幕切换") {
+                    screens.forEach { screen ->
+                        DrawerRow(
+                            label = screen.name,
+                            sublabel = "${screen.width}×${screen.height}",
+                            active = screen.index == curScreen,
+                            onClick = { onSwitchScreen(screen.index) },
                         )
                     }
                 }
-
-                Spacer(Modifier.height(14.dp))
-                Divider(color = Color(0xFF2D2D2D))
-                Spacer(Modifier.height(14.dp))
-
-                // ── Video touch mode ──────────────────────────────────────────
-                MenuSectionLabel("视频区操作模式")
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ToggleButton(
-                        label  = "触屏模式",
-                        active = videoTouchscreen,
-                        onClick = { onToggleVideoMode(true) },
-                    )
-                    ToggleButton(
-                        label  = "触控板模式",
-                        active = !videoTouchscreen,
-                        onClick = { onToggleVideoMode(false) },
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = if (videoTouchscreen)
-                        "点哪跳哪·单指轻点单击·长按右键·双指滚动"
-                    else
-                        "超大触控板·delta移动·双指滚动/捏合·三指手势",
-                    color  = Color(0xFF666666),
-                    fontSize = 10.sp,
-                )
-
-                Spacer(Modifier.height(14.dp))
-                Divider(color = Color(0xFF2D2D2D))
-                Spacer(Modifier.height(14.dp))
-
-                // ── Mirror / flip ────────────────────────────────────────────
-                MenuSectionLabel("布局")
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("横向反转（控制区在左）", color = Color(0xFFB0B0B0), fontSize = 13.sp)
-                    Switch(
-                        checked = mirrorLayout,
-                        onCheckedChange = onToggleMirror,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor    = Color.White,
-                            checkedTrackColor    = Color(0xFF4A90E2),
-                            uncheckedTrackColor  = Color(0xFF333333),
-                        ),
-                    )
-                }
-
-                Spacer(Modifier.height(14.dp))
-                Divider(color = Color(0xFF2D2D2D))
-                Spacer(Modifier.height(14.dp))
-
-                // ── Disconnect ────────────────────────────────────────────────
-                Button(
-                    onClick = onDisconnect,
-                    colors  = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFB23A48),
-                        contentColor   = Color.White,
-                    ),
-                    shape    = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("断开连接", fontSize = 14.sp)
-                }
-
-                Spacer(Modifier.height(10.dp))
-                Text("点击空白处关闭", color = Color(0xFF444444), fontSize = 10.sp)
             }
+
+            // FPS
+            DrawerSection("帧率") {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(30, 60, 120).forEach { f ->
+                        TinyToggleBtn("${f}fps", f == fps) { onChangeFps(f) }
+                    }
+                }
+            }
+
+            // Video mode
+            DrawerSection("视频区操作模式") {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TinyToggleBtn("触屏",  videoTouchscreen)  { onToggleVideoMode(true) }
+                    TinyToggleBtn("触控板", !videoTouchscreen) { onToggleVideoMode(false) }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (videoTouchscreen) "点哪跳哪 · 长按右键 · 双指滚动"
+                    else "超大触控板 · 双指滚动/捏合 · 三指手势",
+                    color = Color(0xFF555555), fontSize = 10.sp,
+                )
+            }
+
+            // Layout
+            DrawerSection("布局") {
+                DrawerSwitch("控制区在左（横向反转）", mirrorLayout, onToggleMirror)
+                DrawerSwitch("上下颠倒（180°旋转）",  flipVertical, onToggleFlip)
+            }
+
+            // Drag lock
+            DrawerSection("拖拽模式") {
+                DrawerSwitch("拖拽锁（长按0.45s后才可拖拽，关闭则自由移动）",
+                    dragLockEnabled, onToggleDragLock)
+            }
+
+            // Audio
+            DrawerSection("语音输入") {
+                DrawerSwitch("开启麦克风传输到Mac", audioOn, onToggleAudio)
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "开启后手机麦克风音频将发送至 Mac，可用于语音识别/录音。\n需要麦克风权限。",
+                    color = Color(0xFF555555), fontSize = 10.sp,
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text("点击空白区域或再次按返回关闭",
+                color = Color(0xFF3A3A3A), fontSize = 10.sp,
+                modifier = Modifier.fillMaxWidth())
         }
     }
 }
 
-// ── Small reusable composables ────────────────────────────────────────────────
+// ── Drawer components ─────────────────────────────────────────────────────────
 
 @Composable
-private fun MenuSectionLabel(text: String) {
-    Text(text, color = Color(0xFF888888), fontSize = 11.sp,
-        modifier = Modifier.fillMaxWidth())
+private fun DrawerTopBar(
+    state: RemoteSession.State,
+    resolution: Pair<Int, Int>?,
+    onDisconnect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1A1A1A))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column {
+            Text(
+                if (state == RemoteSession.State.Connected) "● 已连接" else "○ 断开",
+                color  = if (state == RemoteSession.State.Connected) Color(0xFF4CAF50) else Color(0xFFB0B0B0),
+                fontSize = 13.sp,
+            )
+            resolution?.let { (w, h) ->
+                Text("${w}×${h}", color = Color(0xFF555555), fontSize = 10.sp)
+            }
+        }
+        Button(
+            onClick = onDisconnect,
+            colors  = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFFB23A48), contentColor = Color.White),
+            shape   = RoundedCornerShape(6.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier.height(32.dp),
+        ) { Text("断开", fontSize = 12.sp) }
+    }
 }
 
 @Composable
-private fun ToggleButton(label: String, active: Boolean, onClick: () -> Unit) {
-    val bg by animateColorAsState(
-        targetValue = if (active) Color(0xFF4A90E2) else Color(0xFF2D2D2D),
-        label = "toggle_bg",
-    )
-    Button(
-        onClick  = onClick,
-        colors   = ButtonDefaults.buttonColors(containerColor = bg, contentColor = Color.White),
-        shape    = RoundedCornerShape(6.dp),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text(label, fontSize = 12.sp)
+private fun DrawerSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, color = Color(0xFF666666), fontSize = 11.sp)
+        content()
     }
+}
+
+@Composable
+private fun DrawerRow(label: String, sublabel: String, active: Boolean, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        if (active) Color(0xFF1D3557) else Color(0xFF1E1E1E), label = "dr_bg")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bg, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label,    color = Color.White, fontSize = 12.sp)
+        Text(sublabel, color = Color(0xFF555555), fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun DrawerSwitch(label: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = Color(0xFFCCCCCC), fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Switch(
+            checked  = checked,
+            onCheckedChange = onChanged,
+            colors   = SwitchDefaults.colors(
+                checkedTrackColor   = Color(0xFF4A90E2),
+                uncheckedTrackColor = Color(0xFF333333),
+            ),
+        )
+    }
+}
+
+@Composable
+private fun TinyToggleBtn(label: String, active: Boolean, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        if (active) Color(0xFF4A90E2) else Color(0xFF2A2A2A), label = "ttb_bg")
+    Button(
+        onClick = onClick,
+        colors  = ButtonDefaults.buttonColors(containerColor = bg, contentColor = Color.White),
+        shape   = RoundedCornerShape(5.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+        modifier = Modifier.height(30.dp),
+    ) { Text(label, fontSize = 11.sp) }
 }

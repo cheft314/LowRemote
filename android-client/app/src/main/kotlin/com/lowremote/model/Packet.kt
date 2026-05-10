@@ -26,6 +26,19 @@ object Packet {
     /**
      * Build a control-event packet ready for `DatagramSocket.send`.
      */
+    const val TYPE_AUDIO: Byte = 0x03
+
+    fun encodeAudio(frameId: Int, pcm: ByteArray): ByteArray {
+        val buf = ByteBuffer.allocate(HEADER_SIZE + pcm.size).order(ByteOrder.LITTLE_ENDIAN)
+        buf.putInt(frameId)
+        buf.putShort(0)
+        buf.putShort(1)
+        buf.put(TYPE_AUDIO)
+        buf.put(0)
+        buf.put(pcm)
+        return buf.array()
+    }
+
     fun encodeControl(frameId: Int, eventString: String): ByteArray {
         val payload = eventString.toByteArray(Charsets.UTF_8)
         val buf = ByteBuffer.allocate(HEADER_SIZE + payload.size).order(ByteOrder.LITTLE_ENDIAN)

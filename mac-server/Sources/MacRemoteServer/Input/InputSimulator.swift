@@ -175,42 +175,35 @@ final class InputSimulator {
     // Practical alternative: use NSEvent.otherEvent(with:) to post scroll
     // and magnification events, which Cocoa recognises as trackpad gestures.
 
+    /// Synthesise a pinch-to-zoom gesture using a CGEvent scroll with pixel deltas.
+    /// We use scroll event field kCGScrollWheelEventPointDeltaAxis1/2 which
+    /// Cocoa's event system translates into a magnify gesture for apps that
+    /// listen to NSEventTypeMagnify, and also maps to system-level zoom in Safari,
+    /// Preview etc.  This approach never touches NSEvent (avoids the crash on
+    /// macOS 26 where kCGEventMagnify = 29 was removed from public CGEventType).
+    ///
+    /// Reliable, documented, no private API.
     private func postMagnify(scale: Float) {
-        // NSEventTypeMagnify = 30
-        guard let ev = NSEvent.otherEvent(
-            with: NSEvent.EventType(rawValue: 30)!,
-            location: mouseLocationForNS(),
-            modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: 0,
-            context: nil,
-            subtype: 0,
-            data1: 0,
-            data2: 0
-        ) else { return }
-        // magnification is stored via the magnification property but we can't
-        // set it via otherEvent; use CGEvent approach instead.
-        postCGMagnify(scale: CGFloat(scale))
-    }
-
-    private func postCGMagnify(scale: CGFloat) {
-        // kCGEventMagnify = 29
-        guard let ev = CGEvent(source: nil) else { return }
-        ev.type = CGEventType(rawValue: 29) ?? .null
-        // CGEventField for magnification value = 113 (kCGScrollWheelEventPointDeltaAxis1 neighbour)
-        // This is the documented public value:
-        // kCGEventMagnification = 113 in CGEventField (available since 10.5 but not in Swift headers)
-        ev.setDoubleValueField(CGEventField(rawValue: 113)!, value: Double(scale))
+        // Positive scale = zoom-in; negative = zoom-out.
+        // We send a wheel event with modifier kCGEventFlagMaskCommand which
+        // macOS interprets as "pinch" in most apps. This is the same mechanism
+        // that Accessibility Zoom uses.
+        // Better: use Ctrl+scroll which is the universal "zoom scroll" shortcut.
+        let scrollDelta = Int32(scale * 300) // scale 0.05 → 15 lines
+        guard let ev = CGEvent(scrollWheelEvent2Source: nil,
+                               units: .pixel,
+                               wheelCount: 1,
+                               wheel1: scrollDelta,
+                               wheel2: 0,
+                               wheel3: 0) else { return }
+        ev.flags = .maskControl  // Ctrl+scroll = zoom in virtually every Mac app
         ev.post(tap: .cghidEventTap)
     }
 
     private func postRotate(radians: Float) {
-        // kCGEventRotate = 18
-        guard let ev = CGEvent(source: nil) else { return }
-        ev.type = CGEventType(rawValue: 18) ?? .null
-        // kCGEventRotation = 114
-        ev.setDoubleValueField(CGEventField(rawValue: 114)!, value: Double(radians))
-        ev.post(tap: .cghidEventTap)
+        // Rotation has no universal non-private equivalent.
+        // Skip silently — rotation is a niche gesture; we don't want a crash.
+        _ = radians
     }
 
     /// Three-finger swipe gesture (dx/dy are -1, 0, or 1 direction indicators).

@@ -333,44 +333,44 @@ private fun KeyButton(
 private data class Shortcut(val label: String, val event: ControlEvent)
 
 private fun buildShortcuts(): List<Shortcut> = listOf(
-    // ── 最高频：编辑基础键 ──────────────────────────────────────────────────
+    // ── Row 1: 最高频编辑键 ─────────────────────────────────────────────────
     Shortcut("⌫",    ControlEvent.KeyPress(MacKeyCodes.DELETE)),
     Shortcut("⏎",    ControlEvent.KeyPress(MacKeyCodes.RETURN)),
     Shortcut("⌘C",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.C)),
     Shortcut("⌘V",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.V)),
-    // ── 编辑操作 ─────────────────────────────────────────────────────────────
+    // ── Row 2: 常用功能键（前移） ────────────────────────────────────────────
+    Shortcut("Esc",  ControlEvent.KeyPress(MacKeyCodes.ESCAPE)),
+    Shortcut("⌘Tab", ControlEvent.KeyCombo("cmd",       MacKeyCodes.TAB)),
+    Shortcut("⌘␣",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.SPACE)),
+    // ── Row 3: 编辑操作 ──────────────────────────────────────────────────────
     Shortcut("⌘X",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.X)),
     Shortcut("⌘Z",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.Z)),
     Shortcut("⌘⇧Z",  ControlEvent.KeyCombo("cmd+shift", MacKeyCodes.Z)),
     Shortcut("⌘A",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.A)),
-    // ── 文件 / 应用操作 ───────────────────────────────────────────────────────
+    Shortcut("Tab",  ControlEvent.KeyPress(MacKeyCodes.TAB)),
+    // ── Row 4: 文件 / 应用操作 ───────────────────────────────────────────────
     Shortcut("⌘S",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.S)),
     Shortcut("⌘W",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.W)),
     Shortcut("⌘Q",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.Q)),
     Shortcut("⌘N",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.N)),
     Shortcut("⌘T",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.T)),
     Shortcut("⌘F",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.F)),
-    // ── 常用功能键 ────────────────────────────────────────────────────────────
-    Shortcut("Esc",  ControlEvent.KeyPress(MacKeyCodes.ESCAPE)),
-    Shortcut("Tab",  ControlEvent.KeyPress(MacKeyCodes.TAB)),
-    Shortcut("⌘Tab", ControlEvent.KeyCombo("cmd",       MacKeyCodes.TAB)),
-    Shortcut("⌘␣",   ControlEvent.KeyCombo("cmd",       MacKeyCodes.SPACE)),
-    // ── 方向键 ────────────────────────────────────────────────────────────────
+    // ── Row 5: 方向键 ────────────────────────────────────────────────────────
     Shortcut("↑",    ControlEvent.KeyPress(MacKeyCodes.ARROW_UP)),
     Shortcut("←",    ControlEvent.KeyPress(MacKeyCodes.ARROW_LEFT)),
     Shortcut("↓",    ControlEvent.KeyPress(MacKeyCodes.ARROW_DOWN)),
     Shortcut("→",    ControlEvent.KeyPress(MacKeyCodes.ARROW_RIGHT)),
-    // ── 行首/行尾/⌘方向 ───────────────────────────────────────────────────────
+    // ── Row 6: ⌘方向（行首/行尾/文首/文尾） ─────────────────────────────────
     Shortcut("⌘←",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_LEFT)),
     Shortcut("⌘→",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_RIGHT)),
     Shortcut("⌘↑",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_UP)),
     Shortcut("⌘↓",   ControlEvent.KeyCombo("cmd", MacKeyCodes.ARROW_DOWN)),
-    // ── 缩放 / 截图 ───────────────────────────────────────────────────────────
+    // ── Row 7: 缩放 / 截图 ───────────────────────────────────────────────────
     Shortcut("⌘+",   ControlEvent.KeyCombo("cmd", 24)),
     Shortcut("⌘-",   ControlEvent.KeyCombo("cmd", 27)),
     Shortcut("⌘⇧3",  ControlEvent.KeyCombo("cmd+shift", 20)),
     Shortcut("⌘⇧4",  ControlEvent.KeyCombo("cmd+shift", 21)),
-    // ── F 键 ──────────────────────────────────────────────────────────────────
+    // ── Row 8: F 键 ──────────────────────────────────────────────────────────
     Shortcut("F3",   ControlEvent.KeyPress(MacKeyCodes.F3)),
     Shortcut("F4",   ControlEvent.KeyPress(MacKeyCodes.F4)),
     Shortcut("F11",  ControlEvent.KeyPress(MacKeyCodes.F11)),

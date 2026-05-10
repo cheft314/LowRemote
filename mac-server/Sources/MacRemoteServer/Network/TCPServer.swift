@@ -186,10 +186,10 @@ private final class ClientConnection {
     }
 
     /// Switch into binary-receive mode for a file of `size` bytes.
-    /// Must be called from the connection queue (inside `onLine` callback).
+    /// Safe to call multiple times (resets state for each new file).
     func beginFileReceive(size: Int) {
         fileBytesRemaining = size
-        fileBuffer.removeAll(keepingCapacity: true)
+        fileBuffer = Data()   // always start fresh — never carry over from a previous file
     }
 
     // MARK: - Private receive loop
@@ -211,26 +211,34 @@ private final class ClientConnection {
     }
 
     /// Main demux: consume bytes from `buffer` in the correct mode.
+    ///
+    /// IMPORTANT: Swift `Data` indices are NOT always 0-based after mutations.
+    /// We always rebuild `buffer` as a fresh `Data` to ensure startIndex == 0
+    /// and avoid subscript-out-of-bounds crashes on Foundation-bridged buffers.
     private func drainBuffer() {
         while !buffer.isEmpty {
             if fileBytesRemaining > 0 {
                 // ── Binary mode: consume up to fileBytesRemaining bytes ────────
                 let take = min(fileBytesRemaining, buffer.count)
-                let chunk = buffer.prefix(take)
-                buffer.removeFirst(take)
+                let chunk = Data(buffer.prefix(take))
+                // Rebuild buffer from scratch to guarantee startIndex == 0
+                buffer = buffer.count > take ? Data(buffer[take...]) : Data()
                 fileBuffer.append(chunk)
                 fileBytesRemaining -= take
                 onFileData?(chunk)
-
-                if fileBytesRemaining == 0 {
-                    // All file bytes received — fall through to line mode
-                    // to consume the trailing FILE_END\n
-                }
+                // When fileBytesRemaining reaches 0, continue the loop in
+                // line mode to consume the trailing FILE_END\n from the wire.
             } else {
                 // ── Line mode: drain \n-delimited lines ───────────────────────
-                guard let idx = buffer.firstIndex(of: 0x0A) else { break }
-                let lineData = buffer.subdata(in: 0..<idx)
-                buffer.removeSubrange(0...idx)
+                // Use a manual byte scan so we are never confused by Data's
+                // internal index representation after prior mutations.
+                guard let newlineOffset = buffer.firstIndex(of: 0x0A) else { break }
+                // Safety: ensure the slice range is valid
+                guard newlineOffset <= buffer.endIndex else { break }
+                let lineData = Data(buffer[buffer.startIndex..<newlineOffset])
+                // Advance past the '\n' byte
+                let nextStart = buffer.index(after: newlineOffset)
+                buffer = nextStart < buffer.endIndex ? Data(buffer[nextStart...]) : Data()
                 if let line = String(data: lineData, encoding: .utf8) {
                     onLine?(line)
                 }

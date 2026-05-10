@@ -339,28 +339,43 @@ final class InputSimulator {
         let utf16 = Array(text.utf16)
         guard !utf16.isEmpty else { return }
 
-        // Inject in chunks of ≤16 UTF-16 code-units.
-        // Sending all characters in one CGEvent pair causes the system event
-        // queue to drop characters silently when the string is long.
-        let chunkSize = 16
-        var offset = 0
-        while offset < utf16.count {
-            let end   = min(offset + chunkSize, utf16.count)
-            let chunk = Array(utf16[offset..<end])
-            func post(_ down: Bool) {
-                guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)
-                else { return }
-                chunk.withUnsafeBufferPointer {
-                    ev.keyboardSetUnicodeString(stringLength: chunk.count,
-                                               unicodeString: $0.baseAddress!)
+        // Inject Unicode text via CGEvent on a BACKGROUND thread so we never
+        // block the main thread (which would stall all subsequent event delivery).
+        //
+        // CGEvent(keyboardEventSource:) does NOT require the main thread — only
+        // CGEvent.post(tap:.cghidEventTap) needs an active run-loop, but that
+        // requirement is satisfied by any thread that calls it while the app's
+        // CFRunLoop is spinning (which it always is for a menu-bar app).
+        //
+        // We send up to 8 UTF-16 code-units per CGEvent pair and space them
+        // 15 ms apart so the system event queue never overflows.
+        DispatchQueue.global(qos: .userInteractive).async {
+            let chunkSize = 8
+            var offset = 0
+            while offset < utf16.count {
+                let end   = min(offset + chunkSize, utf16.count)
+                let chunk = Array(utf16[offset..<end])
+
+                func post(_ down: Bool) {
+                    guard let ev = CGEvent(keyboardEventSource: nil,
+                                          virtualKey: 0,
+                                          keyDown: down) else { return }
+                    chunk.withUnsafeBufferPointer { ptr in
+                        ev.keyboardSetUnicodeString(stringLength: chunk.count,
+                                                   unicodeString: ptr.baseAddress!)
+                    }
+                    ev.post(tap: .cghidEventTap)
                 }
-                ev.post(tap: .cghidEventTap)
-            }
-            post(true); post(false)
-            offset = end
-            if offset < utf16.count {
-                // 20 ms pause so the system event queue drains between chunks.
-                Thread.sleep(forTimeInterval: 0.02)
+
+                post(true)
+                post(false)
+                offset = end
+
+                if offset < utf16.count {
+                    // 15 ms between chunks — enough for the HID event queue to drain
+                    // without blocking the main thread at all.
+                    Thread.sleep(forTimeInterval: 0.015)
+                }
             }
         }
     }

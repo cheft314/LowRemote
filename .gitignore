@@ -1,0 +1,25 @@
+# Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+Package.resolved
+
+# Android / Gradle
+android-client/.gradle/
+android-client/build/
+android-client/app/build/
+android-client/local.properties
+android-client/.idea/
+android-client/*.iml
+android-client/app/*.iml
+android-client/captures/
+android-client/.cxx/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

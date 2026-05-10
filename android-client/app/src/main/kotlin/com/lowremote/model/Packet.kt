@@ -20,6 +20,8 @@ object Packet {
 
     const val TYPE_VIDEO: Byte = 0x01
     const val TYPE_CONTROL: Byte = 0x02
+    /** Raw PCM: 48 kHz · stereo · Float32 interleaved · little-endian. */
+    const val TYPE_AUDIO: Byte = 0x04
 
     const val FLAG_KEYFRAME: Byte = 0x01
 

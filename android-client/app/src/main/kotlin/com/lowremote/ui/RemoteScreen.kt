@@ -178,11 +178,10 @@ private fun SessionMenuDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        // 半透明遮罩，点击遮罩关闭
+        // 无遮罩：直接居中显示菜单卡片，点击卡片外区域关闭
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xAA000000))
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {

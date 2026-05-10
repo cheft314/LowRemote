@@ -16,6 +16,7 @@ import CoreGraphics
 enum ControlEvent {
     case mouseMove(dx: Double, dy: Double)
     case mouseClick(MouseButton)
+    case mouseDoubleClick(MouseButton)
     case mouseDown(MouseButton)
     case mouseUp(MouseButton)
     case mouseWheel(Int)
@@ -40,6 +41,9 @@ enum ControlEvent {
 
         case "MC":
             return button(from: args).map { .mouseClick($0) }
+
+        case "MDC":
+            return button(from: args).map { .mouseDoubleClick($0) }
 
         case "MD":
             return button(from: args).map { .mouseDown($0) }

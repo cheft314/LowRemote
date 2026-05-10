@@ -15,10 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenCapture: ScreenCaptureManager!
     private var encoder: VideoEncoder!
     private var inputSimulator: InputSimulator!
+    private var audioCapture: AudioCaptureManager!
 
     private var clientEndpoint: (host: String, port: UInt16)?
     private var currentFPS: Int = 60
     private var frameIdCounter: UInt32 = 0
+    /// The display currently being streamed. Default to main; user can cycle via menu.
+    private var activeDisplayID: CGDirectDisplayID = CGMainDisplayID()
 
     // MARK: - Lifecycle
 
@@ -57,6 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusMenu.addItem(NSMenuItem.separator())
 
+        let switchDisplayItem = NSMenuItem(title: "切换显示器", action: #selector(cycleDisplay), keyEquivalent: "d")
+        switchDisplayItem.target = self
+        statusMenu.addItem(switchDisplayItem)
+
+        statusMenu.addItem(NSMenuItem.separator())
+
         let quitItem = NSMenuItem(title: "退出 LowRemote", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         statusMenu.addItem(quitItem)
@@ -66,6 +75,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+
+    @objc private func cycleDisplay() {
+        let displays = ScreenCaptureManager.onlineDisplayIDs()
+        guard displays.count > 1 else {
+            NSLog("[LowRemote] Only one display available, nothing to switch.")
+            return
+        }
+        let currentIdx = displays.firstIndex(of: activeDisplayID) ?? 0
+        let nextIdx = (currentIdx + 1) % displays.count
+        activeDisplayID = displays[nextIdx]
+        NSLog("[LowRemote] Switched to display \(activeDisplayID) (index \(nextIdx))")
+        inputSimulator.activeDisplayID = activeDisplayID
+        // Re-broadcast resolution for the new display and restart streaming.
+        if let size = ScreenCaptureManager.pixelSize(of: activeDisplayID) {
+            tcpServer.broadcast("RESOLUTION:\(Int(size.width)),\(Int(size.height))\n")
+        }
+        startStreaming(fps: currentFPS)
     }
 
     private func updateStatus(_ text: String) {
@@ -110,10 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleTCPCommand(cmd, clientHost: clientHost)
         }
         tcpServer.onClientConnected = { [weak self] host in
-            self?.updateStatus("已连接 \(host)")
-            // Send screen resolution as handshake
-            if let size = ScreenCaptureManager.mainDisplayPixelSize() {
-                self?.tcpServer.broadcast("RESOLUTION:\(Int(size.width)),\(Int(size.height))\n")
+            guard let self = self else { return }
+            self.updateStatus("已连接 \(host)")
+            // Send screen resolution as handshake (use active display).
+            let displayID = self.activeDisplayID
+            if let size = ScreenCaptureManager.pixelSize(of: displayID) {
+                self.tcpServer.broadcast("RESOLUTION:\(Int(size.width)),\(Int(size.height))\n")
             }
         }
         tcpServer.onClientDisconnected = { [weak self] in
@@ -174,12 +203,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startStreaming(fps: Int) {
         stopStreaming()
 
-        guard let size = ScreenCaptureManager.mainDisplayPixelSize() else {
-            NSLog("[LowRemote] Failed to get main display size")
+        let displayID = activeDisplayID
+        guard let size = ScreenCaptureManager.pixelSize(of: displayID) else {
+            NSLog("[LowRemote] Failed to get display size for \(displayID)")
             return
         }
         let width = Int(size.width)
         let height = Int(size.height)
+
+        // Keep InputSimulator in sync with the display being streamed.
+        inputSimulator.activeDisplayID = displayID
 
         let bitrate: Int
         switch fps {
@@ -203,9 +236,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenCapture.onFrame = { [weak self] pixelBuffer in
             self?.encoder.encode(pixelBuffer: pixelBuffer)
         }
-        screenCapture.start(fps: fps)
+        screenCapture.start(fps: fps, displayID: displayID)
 
-        NSLog("[LowRemote] Streaming started at \(fps) fps (\(width)x\(height))")
+        // Start audio capture — sends PCM chunks to the client over UDP (type 0x04).
+        audioCapture = AudioCaptureManager()
+        audioCapture.onAudioBuffer = { [weak self] pcmData in
+            self?.sendAudioChunk(pcmData)
+        }
+        audioCapture.start()
+
+        NSLog("[LowRemote] Streaming started at \(fps) fps (\(width)x\(height)) display=\(displayID)")
     }
 
     private func stopStreaming() {
@@ -213,6 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenCapture = nil
         encoder?.stop()
         encoder = nil
+        audioCapture?.stop()
+        audioCapture = nil
     }
 
     private func sendEncodedFrame(_ nalData: Data, isKeyframe: Bool) {
@@ -235,6 +277,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 payload: chunk
             )
             udpServer.send(packet, to: endpoint.host, port: endpoint.port)
+        }
+    }
+
+    private func sendAudioChunk(_ pcmData: Data) {
+        guard let endpoint = clientEndpoint else { return }
+        // Audio is always a single-fragment packet (≤ 1390 bytes ≈ 1024 frames × 2 ch × 4 bytes = ~8 kB).
+        // Chunk into MTU-safe segments if needed.
+        let maxPayload = Packet.maxPayloadSize
+        var offset = 0
+        while offset < pcmData.count {
+            let end = min(offset + maxPayload, pcmData.count)
+            let chunk = pcmData.subdata(in: offset..<end)
+            let packet = Packet.encodeAudio(frameId: nextFrameId(), payload: chunk)
+            udpServer.send(packet, to: endpoint.host, port: endpoint.port)
+            offset = end
         }
     }
 

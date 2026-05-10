@@ -2,6 +2,7 @@ package com.lowremote.session
 
 import android.util.Log
 import android.view.Surface
+import com.lowremote.audio.AudioPlayer
 import com.lowremote.codec.FrameAssembler
 import com.lowremote.codec.H265Decoder
 import com.lowremote.model.ControlEvent
@@ -48,6 +49,7 @@ class RemoteSession {
     private val receiver = UdpReceiver(port = CLIENT_UDP_PORT)
     private val sender = UdpSender()
     private val assembler = FrameAssembler()
+    private val audioPlayer = AudioPlayer()
 
     private var decoder: H265Decoder? = null
     @Volatile private var surface: Surface? = null
@@ -74,6 +76,7 @@ class RemoteSession {
         receiver.onPacket = { parsed, payload, _ ->
             when (parsed.type) {
                 Packet.TYPE_VIDEO -> assembler.onPacket(parsed, payload)
+                Packet.TYPE_AUDIO -> audioPlayer.write(payload)
                 else -> { /* ignore */ }
             }
         }
@@ -137,6 +140,7 @@ class RemoteSession {
             tcp.send("FPS:$fps")
 
             _state.value = State.Connected
+            audioPlayer.start()
             startHeartbeat()
         }
     }
@@ -235,6 +239,7 @@ class RemoteSession {
         heartbeatJob = null
         tcp.disconnect()
         receiver.stop()
+        audioPlayer.stop()
         synchronized(decoderLock) {
             decoder?.stop()
             decoder = null

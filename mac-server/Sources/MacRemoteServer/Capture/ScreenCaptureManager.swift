@@ -3,8 +3,7 @@ import CoreGraphics
 import CoreVideo
 import IOSurface
 
-/// Captures the main display at a configurable frame rate using CGDisplayStream,
-/// which is the lowest-latency path available on macOS (pre-ScreenCaptureKit).
+/// Captures a specific display at a configurable frame rate using CGDisplayStream.
 ///
 /// The callback delivers a CVPixelBuffer backed by the captured IOSurface so the
 /// encoder can feed it straight into VideoToolbox without a copy.
@@ -15,6 +14,9 @@ final class ScreenCaptureManager {
 
     var onFrame: ((CVPixelBuffer) -> Void)?
 
+    /// The display currently being captured (updated by start()).
+    private(set) var activeDisplayID: CGDirectDisplayID = CGMainDisplayID()
+
     static func mainDisplayPixelSize() -> CGSize? {
         let displayID = CGMainDisplayID()
         let width = CGDisplayPixelsWide(displayID)
@@ -23,17 +25,30 @@ final class ScreenCaptureManager {
         return CGSize(width: width, height: height)
     }
 
-    func start(fps: Int) {
+    /// Returns the pixel size of the given display, or nil on failure.
+    static func pixelSize(of displayID: CGDirectDisplayID) -> CGSize? {
+        let width = CGDisplayPixelsWide(displayID)
+        let height = CGDisplayPixelsHigh(displayID)
+        guard width > 0, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    /// All currently-online display IDs.
+    static func onlineDisplayIDs() -> [CGDirectDisplayID] {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 8)
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(8, &ids, &count)
+        return Array(ids.prefix(Int(count)))
+    }
+
+    func start(fps: Int, displayID: CGDirectDisplayID = CGMainDisplayID()) {
         stop()
 
-        let displayID = CGMainDisplayID()
+        activeDisplayID = displayID
         let width = CGDisplayPixelsWide(displayID)
         let height = CGDisplayPixelsHigh(displayID)
 
         let minFrameTime: Double = 1.0 / Double(fps)
-
-        // BGRA is universally supported and gives us zero-copy into a CVPixelBuffer
-        // wrapping the same IOSurface. VideoToolbox accepts it directly.
         let pixelFormat: Int32 = Int32(kCVPixelFormatType_32BGRA)
 
         let properties: [CFString: Any] = [
@@ -60,7 +75,7 @@ final class ScreenCaptureManager {
                 self?.onFrame?(pixelBuffer)
             }
         ) else {
-            NSLog("[Capture] Failed to create CGDisplayStream")
+            NSLog("[Capture] Failed to create CGDisplayStream for display \(displayID)")
             return
         }
 
@@ -71,7 +86,7 @@ final class ScreenCaptureManager {
         }
 
         self.stream = stream
-        NSLog("[Capture] Started at \(width)x\(height) @ \(fps)fps")
+        NSLog("[Capture] Started display \(displayID) at \(width)x\(height) @ \(fps)fps")
     }
 
     func stop() {

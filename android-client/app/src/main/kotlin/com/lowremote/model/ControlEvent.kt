@@ -29,6 +29,10 @@ sealed class ControlEvent {
         override fun serialize(): String = "MC:${button.code}"
     }
 
+    data class MouseDoubleClick(val button: Button) : ControlEvent() {
+        override fun serialize(): String = "MDC:${button.code}"
+    }
+
     data class MouseDown(val button: Button) : ControlEvent() {
         override fun serialize(): String = "MD:${button.code}"
     }

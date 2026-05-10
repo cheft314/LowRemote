@@ -11,6 +11,10 @@ final class InputSimulator {
     // Remember whether we're mid-drag so ACTION_MOVE becomes leftMouseDragged.
     private var leftButtonDown = false
 
+    /// The display currently being streamed; used to map touch coordinates
+    /// correctly when the user has switched away from the main display.
+    var activeDisplayID: CGDirectDisplayID = CGMainDisplayID()
+
     func handleEvent(_ event: ControlEvent) {
         // 双重保险：强制在主线程执行
         if !Thread.isMainThread {
@@ -24,6 +28,9 @@ final class InputSimulator {
 
         case .mouseClick(let btn):
             clickMouse(button: btn)
+
+        case .mouseDoubleClick(let btn):
+            doubleClickMouse(button: btn)
 
         case .mouseDown(let btn):
             postMouseButton(button: btn, down: true)
@@ -64,16 +71,15 @@ final class InputSimulator {
         point.x += CGFloat(dx)
         point.y += CGFloat(dy)
 
-        // 夹在所有屏幕的联合区域内
-        let union = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }
-        // 注意：CGRect 里 y 还是 AppKit bottom-origin，这里 point.y 已经是 CG top-origin
-        // 简化处理：只夹 x
-        if !union.isNull {
-            point.x = max(0, min(point.x, union.maxX - 1))
-            // 对 y：CG top-origin，0 是顶部，maxH-1 是底部
-            let maxH = NSScreen.main?.frame.height ?? 800
-            point.y = max(0, min(point.y, maxH - 1))
-        }
+        // Clamp within the bounds of the active display (CG top-left origin).
+        let displayBounds = CGDisplayBounds(activeDisplayID)
+        // displayBounds is in CG global coordinates (y increases downward from primary top-left).
+        let minX = displayBounds.minX
+        let maxX = displayBounds.maxX - 1
+        let minY = displayBounds.minY
+        let maxY = displayBounds.maxY - 1
+        point.x = max(minX, min(point.x, maxX))
+        point.y = max(minY, min(point.y, maxY))
 
         let eventType: CGEventType = leftButtonDown ? .leftMouseDragged : .mouseMoved
         let mouseBtn: CGMouseButton = .left
@@ -86,11 +92,19 @@ final class InputSimulator {
     }
 
     private func clickMouse(button: ControlEvent.MouseButton) {
-        postMouseButton(button: button, down: true)
-        postMouseButton(button: button, down: false)
+        postMouseButton(button: button, down: true, clickCount: 1)
+        postMouseButton(button: button, down: false, clickCount: 1)
     }
 
-    private func postMouseButton(button: ControlEvent.MouseButton, down: Bool) {
+    private func doubleClickMouse(button: ControlEvent.MouseButton) {
+        // macOS requires clickCount=2 on the second down/up pair for a real double-click.
+        postMouseButton(button: button, down: true, clickCount: 1)
+        postMouseButton(button: button, down: false, clickCount: 1)
+        postMouseButton(button: button, down: true, clickCount: 2)
+        postMouseButton(button: button, down: false, clickCount: 2)
+    }
+
+    private func postMouseButton(button: ControlEvent.MouseButton, down: Bool, clickCount: Int64 = 1) {
         let point = currentCursor()
         let cgButton: CGMouseButton = button == .left ? .left : .right
         let type: CGEventType
@@ -104,6 +118,7 @@ final class InputSimulator {
                             mouseType: type,
                             mouseCursorPosition: point,
                             mouseButton: cgButton) {
+            ev.setIntegerValueField(.mouseEventClickState, value: clickCount)
             ev.post(tap: .cghidEventTap)
         }
     }
@@ -133,25 +148,40 @@ final class InputSimulator {
 
     /// Unicode 文字注入 —— 通过 keyboardSetUnicodeString 绕过 keyCode 映射，
     /// 支持任意 Unicode（含中文）。
+    /// 每次最多注入 16 个 UTF-16 码元，分段之间加 20ms 延迟，
+    /// 防止系统事件队列溢出导致字符丢失。
     private func typeText(_ text: String) {
         let utf16 = Array(text.utf16)
         guard !utf16.isEmpty else { return }
 
-        if let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
-            utf16.withUnsafeBufferPointer { buf in
-                if let base = buf.baseAddress {
-                    down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: base)
+        let chunkSize = 16
+        var offset = 0
+        while offset < utf16.count {
+            let end = min(offset + chunkSize, utf16.count)
+            let chunk = Array(utf16[offset..<end])
+
+            if let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
+                chunk.withUnsafeBufferPointer { buf in
+                    if let base = buf.baseAddress {
+                        down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: base)
+                    }
                 }
+                down.post(tap: .cghidEventTap)
             }
-            down.post(tap: .cghidEventTap)
-        }
-        if let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) {
-            utf16.withUnsafeBufferPointer { buf in
-                if let base = buf.baseAddress {
-                    up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: base)
+            if let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) {
+                chunk.withUnsafeBufferPointer { buf in
+                    if let base = buf.baseAddress {
+                        up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: base)
+                    }
                 }
+                up.post(tap: .cghidEventTap)
             }
-            up.post(tap: .cghidEventTap)
+
+            offset = end
+            if offset < utf16.count {
+                // 20ms between chunks to let the input system digest events.
+                Thread.sleep(forTimeInterval: 0.02)
+            }
         }
     }
 }

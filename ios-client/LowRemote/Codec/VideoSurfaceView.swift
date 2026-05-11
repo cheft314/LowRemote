@@ -1,27 +1,26 @@
 import UIKit
 import AVFoundation
-import VideoToolbox
 import SwiftUI
 
-/// 视频渲染视图：接收 CVPixelBuffer，通过 Metal AVSampleBufferDisplayLayer 渲染
-/// 保持 16:10 比例（与 Mac 主显示器比例匹配）居中显示，四周留黑边
+/// 视频渲染视图：AVSampleBufferDisplayLayer 直接接受压缩的 HEVC CMSampleBuffer
+/// H265Decoder 把 Annex-B 转换成 HVCC CMSampleBuffer 后直接 enqueue 到这个 layer，
+/// layer 内部自动完成解码（模拟器走软件解码，真机走硬件解码）+ 渲染。
 final class VideoSurfaceView: UIView {
 
     // MARK: - Layer
 
     override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
-    private var displayLayer: AVSampleBufferDisplayLayer {
+
+    /// 暴露给 H265Decoder 直接 enqueue compressed CMSampleBuffer
+    var displayLayer: AVSampleBufferDisplayLayer {
         layer as! AVSampleBufferDisplayLayer
     }
 
     // MARK: - State
 
-    /// 远端屏幕分辨率（宽, 高），由 RemoteSession 更新
     var remoteSize: CGSize = CGSize(width: 1920, height: 1080) {
         didSet { setNeedsLayout() }
     }
-
-    private var ptsCounter: Int64 = 0
 
     // MARK: - Init
 
@@ -36,98 +35,28 @@ final class VideoSurfaceView: UIView {
 
     private func setup() {
         backgroundColor = .black
-        displayLayer.videoGravity = .resizeAspect          // 保持比例，自动加黑边
+        displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
-        // 请求控制时间的时钟 → 立即渲染，延迟最低
-        displayLayer.controlTimebase = makeControlTimebase()
-    }
-
-    // MARK: - Feed
-
-    /// 由 H265Decoder 回调（任意线程），渲染 CVPixelBuffer
-    func enqueue(_ pixelBuffer: CVPixelBuffer) {
-        ptsCounter += 1
-        let pts = CMTime(value: ptsCounter, timescale: 600)
-
-        var timing = CMSampleTimingInfo(
-            duration:               .invalid,
-            presentationTimeStamp:  pts,
-            decodeTimeStamp:        .invalid
-        )
-
-        var formatDesc: CMVideoFormatDescription?
-        CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescriptionOut: &formatDesc
-        )
-        guard let fd = formatDesc else { return }
-
-        var sampleBuf: CMSampleBuffer?
-        CMSampleBufferCreateReadyWithImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescription: fd,
-            sampleTiming: &timing,
-            sampleBufferOut: &sampleBuf
-        )
-        guard let sb = sampleBuf else { return }
-
-        // 标记为已准备好显示
-        let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true)
-        if let arr = attachments as? [NSMutableDictionary], let first = arr.first {
-            first[kCMSampleAttachmentKey_DisplayImmediately] = true
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            if self.displayLayer.status == .failed {
-                self.displayLayer.flush()
-            }
-            self.displayLayer.enqueue(sb)
-        }
+        // 不设置 controlTimebase，由 DisplayImmediately attachment 负责立即渲染
     }
 
     func flush() {
         DispatchQueue.main.async { self.displayLayer.flush() }
     }
 
-    // MARK: - Layout (保持宽高比，黑边适配)
+    // MARK: - Layout
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        displayLayer.frame = videoFrame(in: bounds, videoSize: remoteSize)
+        displayLayer.frame = fitRect(in: bounds, videoSize: remoteSize)
     }
 
-    private func videoFrame(in bounds: CGRect, videoSize: CGSize) -> CGRect {
+    private func fitRect(in bounds: CGRect, videoSize: CGSize) -> CGRect {
         guard videoSize.width > 0, videoSize.height > 0 else { return bounds }
-        let aspectW = bounds.width  / videoSize.width
-        let aspectH = bounds.height / videoSize.height
-        let scale   = min(aspectW, aspectH)
+        let scale = min(bounds.width / videoSize.width, bounds.height / videoSize.height)
         let w = videoSize.width  * scale
         let h = videoSize.height * scale
-        return CGRect(
-            x: (bounds.width  - w) / 2,
-            y: (bounds.height - h) / 2,
-            width:  w,
-            height: h
-        )
-    }
-
-    // MARK: - Timebase
-
-    private func makeControlTimebase() -> CMTimebase? {
-        let hostClock = CMClockGetHostTimeClock()
-        var timebase: CMTimebase?
-        guard CMTimebaseCreateWithSourceClock(
-            allocator: kCFAllocatorDefault,
-            sourceClock: hostClock,
-            timebaseOut: &timebase
-        ) == noErr else { return nil }
-        guard let tb = timebase else { return nil }
-        CMTimebaseSetRate(tb, rate: 1.0)
-        CMTimebaseSetTime(tb, time: .zero)
-        return tb
+        return CGRect(x: (bounds.width-w)/2, y: (bounds.height-h)/2, width: w, height: h)
     }
 }
 

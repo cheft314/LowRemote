@@ -96,7 +96,13 @@ final class RemoteSession {
         decoderLock.lock()
         defer { decoderLock.unlock() }
         videoView = view
-        if let v = view, state == .connected, decoder == nil {
+        guard let v = view else { return }
+        // 更新已运行解码器的渲染目标
+        if let dec = decoder {
+            dec.displayLayer = v.displayLayer
+            return
+        }
+        if state == .connected {
             startDecoderLocked(view: v)
         }
     }
@@ -318,9 +324,7 @@ final class RemoteSession {
         guard decoder == nil else { return }
         let size = remoteResolution ?? CGSize(width: 1920, height: 1080)
         let dec  = H265Decoder(fps: fps)
-        dec.onDecodedFrame = { [weak view] pixelBuffer in
-            view?.enqueue(pixelBuffer)
-        }
+        dec.displayLayer = view.displayLayer
         dec.start()
         decoder = dec
         NSLog("[Session] 解码器启动 \(Int(size.width))x\(Int(size.height)) @ \(fps)fps")

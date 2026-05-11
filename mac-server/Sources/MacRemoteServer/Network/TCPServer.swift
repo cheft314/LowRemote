@@ -118,13 +118,16 @@ final class TCPServer {
                 self.onClientDisconnected?()
             }
         }
+        // 连接就绪后才通知外部（确保 send 时 connection 已是 ready 状态）
+        client.onReady = { [weak self] in
+            self?.onClientConnected?(remoteHost)
+        }
 
         lock.lock()
         connections[key] = client
         lock.unlock()
 
         client.start()
-        onClientConnected?(remoteHost)
     }
 
     private static func remoteHostString(_ conn: NWConnection) -> String? {
@@ -163,6 +166,9 @@ private final class ClientConnection {
 
     var onLine:   ((String) -> Void)?
     var onClosed: (() -> Void)?
+    /// Called once when the underlying NWConnection becomes .ready.
+    /// Guaranteed to fire before any onLine callbacks.
+    var onReady: (() -> Void)?
 
     init(connection: NWConnection, queue: DispatchQueue) {
         self.connection = connection
@@ -173,6 +179,7 @@ private final class ClientConnection {
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
+                self?.onReady?()
                 self?.receive()
             case .failed, .cancelled:
                 self?.onClosed?()

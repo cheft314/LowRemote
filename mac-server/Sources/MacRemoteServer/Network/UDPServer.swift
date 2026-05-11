@@ -26,8 +26,13 @@ final class UDPServer {
     }
 
     func start() {
-        // Create UDP socket
-        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        // 使用 IPv6 dual-stack socket，可同时收发 IPv4 和 IPv6 包
+        var fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
+        var useIPv6 = true
+        if fd < 0 {
+            fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+            useIPv6 = false
+        }
         guard fd >= 0 else {
             NSLog("[UDPServer] socket() failed: \(errno)")
             return
@@ -41,13 +46,28 @@ final class UDPServer {
         var rcvBuf: Int32 = 4 * 1024 * 1024
         setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvBuf, socklen_t(MemoryLayout<Int32>.size))
 
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = listenPort.bigEndian
-        addr.sin_addr.s_addr = INADDR_ANY
-
-        let bindResult = withUnsafeBytes(of: &addr) { ptr in
-            bind(fd, ptr.baseAddress!.assumingMemoryBound(to: sockaddr.self), socklen_t(MemoryLayout<sockaddr_in>.size))
+        let bindResult: Int32
+        if useIPv6 {
+            // IPV6_V6ONLY=0 → dual-stack，同时接收 IPv4-mapped 包
+            var v6only: Int32 = 0
+            setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, socklen_t(MemoryLayout<Int32>.size))
+            var addr6 = sockaddr_in6()
+            addr6.sin6_family = sa_family_t(AF_INET6)
+            addr6.sin6_port   = listenPort.bigEndian
+            addr6.sin6_addr   = in6addr_any
+            bindResult = withUnsafeBytes(of: &addr6) { ptr in
+                bind(fd, ptr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                     socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        } else {
+            var addr4 = sockaddr_in()
+            addr4.sin_family = sa_family_t(AF_INET)
+            addr4.sin_port   = listenPort.bigEndian
+            addr4.sin_addr.s_addr = INADDR_ANY
+            bindResult = withUnsafeBytes(of: &addr4) { ptr in
+                bind(fd, ptr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                     socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
         }
         guard bindResult == 0 else {
             NSLog("[UDPServer] bind() failed: \(errno)")
@@ -62,7 +82,7 @@ final class UDPServer {
         src.resume()
         source = src
 
-        NSLog("[UDPServer] listening on UDP :\(listenPort)")
+        NSLog("[UDPServer] listening on UDP :\(listenPort) (IPv\(useIPv6 ? "6 dual-stack" : "4"))")
     }
 
     func stop() {
@@ -77,27 +97,44 @@ final class UDPServer {
         guard serverFd >= 0 else { return }
 
         var buf = [UInt8](repeating: 0, count: 65536)
-        var senderAddr = sockaddr_in()
-        var senderLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        // 使用 sockaddr_storage 容纳 IPv4 和 IPv6
+        var storageBytes = [UInt8](repeating: 0, count: MemoryLayout<sockaddr_storage>.size)
+        var senderLen = socklen_t(storageBytes.count)
 
-        let n = withUnsafeMutableBytes(of: &senderAddr) { addrPtr in
-            recvfrom(serverFd,
-                     &buf,
-                     buf.count,
-                     0,
+        let n = storageBytes.withUnsafeMutableBytes { addrPtr in
+            recvfrom(serverFd, &buf, buf.count, 0,
                      addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
                      &senderLen)
         }
-
         guard n > 0 else { return }
 
-        // Extract sender IP and port
-        let senderIP: String
-        var ipBuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-        var addr = senderAddr.sin_addr
-        inet_ntop(AF_INET, &addr, &ipBuf, socklen_t(INET_ADDRSTRLEN))
-        senderIP = String(cString: ipBuf)
-        let senderPort = UInt16(bigEndian: senderAddr.sin_port)
+        // 解析发送方地址
+        let (senderIP, senderPort): (String, UInt16) = storageBytes.withUnsafeBytes { ptr in
+            let family = ptr.loadUnaligned(fromByteOffset: 1, as: UInt8.self)
+            var ipBuf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            if family == UInt8(AF_INET) {
+                var addr4 = ptr.loadUnaligned(fromByteOffset: 0, as: sockaddr_in.self)
+                inet_ntop(AF_INET, &addr4.sin_addr, &ipBuf, socklen_t(INET_ADDRSTRLEN))
+                return (String(cString: ipBuf), UInt16(bigEndian: addr4.sin_port))
+            } else if family == UInt8(AF_INET6) {
+                var addr6 = ptr.loadUnaligned(fromByteOffset: 0, as: sockaddr_in6.self)
+                inet_ntop(AF_INET6, &addr6.sin6_addr, &ipBuf, socklen_t(INET6_ADDRSTRLEN))
+                // 检查是否是 IPv4-mapped（::ffff:x.x.x.x），提取 IPv4
+                let ipStr = String(cString: ipBuf)
+                if ipStr.hasPrefix("::ffff:") {
+                    let v4str = String(ipStr.dropFirst(7))
+                    return (v4str, UInt16(bigEndian: addr6.sin6_port))
+                }
+                // link-local 地址附加 scope
+                let scope = addr6.sin6_scope_id
+                var ifnameBuf = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
+                if scope > 0, if_indextoname(scope, &ifnameBuf) != nil {
+                    return ("\(ipStr)%\(String(cString: ifnameBuf))", UInt16(bigEndian: addr6.sin6_port))
+                }
+                return (ipStr, UInt16(bigEndian: addr6.sin6_port))
+            }
+            return ("unknown", 0)
+        }
 
         // Notify first packet (for video endpoint tracking)
         let clientKey = "\(senderIP):\(senderPort)"
@@ -146,22 +183,41 @@ final class UDPServer {
     func send(_ data: Data, to host: String, port: UInt16) {
         guard serverFd >= 0 else { return }
 
-        var destAddr = sockaddr_in()
-        destAddr.sin_family = sa_family_t(AF_INET)
-        destAddr.sin_port   = port.bigEndian
-        inet_pton(AF_INET, host, &destAddr.sin_addr)
-
-        data.withUnsafeBytes { rawBuf in
-            withUnsafeBytes(of: &destAddr) { addrPtr in
-                _ = sendto(
-                    serverFd,
-                    rawBuf.baseAddress!,
-                    data.count,
-                    0,
-                    addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
-                    socklen_t(MemoryLayout<sockaddr_in>.size)
-                )
+        // 尝试 IPv4
+        var addr4 = sockaddr_in()
+        if inet_pton(AF_INET, host, &addr4.sin_addr) == 1 {
+            addr4.sin_family = sa_family_t(AF_INET)
+            addr4.sin_port   = port.bigEndian
+            data.withUnsafeBytes { rawBuf in
+                withUnsafeBytes(of: &addr4) { addrPtr in
+                    _ = sendto(serverFd, rawBuf.baseAddress!, data.count, 0,
+                               addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                               socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
             }
+            return
         }
+
+        // 尝试 IPv6（剥离 %scope 后缀再解析）
+        let cleanHost = host.components(separatedBy: "%").first ?? host
+        var addr6 = sockaddr_in6()
+        if inet_pton(AF_INET6, cleanHost, &addr6.sin6_addr) == 1 {
+            addr6.sin6_family = sa_family_t(AF_INET6)
+            addr6.sin6_port   = port.bigEndian
+            if host.contains("%") {
+                let ifname = String(host.split(separator: "%").last ?? "")
+                addr6.sin6_scope_id = if_nametoindex(ifname)
+            }
+            data.withUnsafeBytes { rawBuf in
+                withUnsafeBytes(of: &addr6) { addrPtr in
+                    _ = sendto(serverFd, rawBuf.baseAddress!, data.count, 0,
+                               addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                               socklen_t(MemoryLayout<sockaddr_in6>.size))
+                }
+            }
+            return
+        }
+
+        NSLog("[UDPServer] send: 无法解析目标地址 \(host)")
     }
 }

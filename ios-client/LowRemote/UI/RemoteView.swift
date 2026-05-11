@@ -222,7 +222,7 @@ struct RemoteView: View {
             HStack(spacing: 6) {
                 Image(systemName: absoluteMode ? "cursorarrow" : "hand.point.up.left.fill")
                     .font(.system(size: 13, weight: .semibold))
-                Text(absoluteMode ? "触屏" : "触控板")
+                Text(absoluteMode ? "屏" : "板")
                     .font(.lrButtonSmall)
             }
             .foregroundStyle(.white.opacity(0.85))

@@ -46,6 +46,8 @@ import kotlin.math.hypot
 class TouchpadView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
+    /** true = landscape mode → 16:10 ratio; false = portrait → 16:9 ratio */
+    val isLandscape: Boolean = false,
 ) : View(context, attrs) {
 
     companion object {
@@ -82,9 +84,14 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     var onEvent: ((ControlEvent) -> Unit)? = null
-    var sensitivity: Float = 1.2f   // reduced from 2.0 — smoother cursor feel
-    /** When true, long-press + drag = drag.  When false, all single-finger moves are plain moves. */
+    var sensitivity: Float = 1.2f
+    /** When true, long-press + drag = drag. */
     var dragLockEnabled: Boolean = false
+    /**
+     * When true, single-finger vertical swipe sends scroll events instead of
+     * moving the cursor. Horizontal movement is ignored in this mode.
+     */
+    var scrollModeEnabled: Boolean = false
 
     private val dp             = context.resources.displayMetrics.density
     private val tapMovePx      = TAP_MOVE_DP  * dp
@@ -93,34 +100,72 @@ class TouchpadView @JvmOverloads constructor(
 
     // ── Drawing ───────────────────────────────────────────────────────────────
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(50, 255, 255, 255); style = Paint.Style.STROKE
-        strokeWidth = 1f * dp
+        style = Paint.Style.STROKE
+        // strokeWidth set in onSizeChanged once dp is available
     }
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(30, 255, 255, 255); textSize = 9.5f * dp
+        color = Color.argb(45, 255, 255, 255)
         textAlign = Paint.Align.CENTER
+        // textSize set in onSizeChanged
     }
     private val dragPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(80, 74, 144, 226); style = Paint.Style.FILL
+        color = Color.argb(60, 79, 142, 247)
+        style = Paint.Style.FILL
+    }
+    // Gradient shader updated in onSizeChanged
+    private var borderShader: android.graphics.LinearGradient? = null
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        borderPaint.strokeWidth = 1.5f * dp
+        hintPaint.textSize      = 10f  * dp
+        // Diagonal gradient border: Accent (#4F8EF7) → Purple (#8B6FE8)
+        borderShader = android.graphics.LinearGradient(
+            0f, 0f, w.toFloat(), h.toFloat(),
+            intArrayOf(0xFF4F8EF7.toInt(), 0xFF8B6FE8.toInt()),
+            null,
+            android.graphics.Shader.TileMode.CLAMP,
+        )
+        borderPaint.shader = borderShader
     }
 
     override fun onMeasure(w: Int, h: Int) {
         val pw = MeasureSpec.getSize(w).coerceAtLeast(1)
-        setMeasuredDimension(pw, pw * 10 / 16)
+        // Portrait → 16:9  |  Landscape → 16:10 (shorter)
+        val measuredH = if (isLandscape) pw * 10 / 16 else pw * 9 / 16
+        setMeasuredDimension(pw, measuredH)
     }
 
     override fun onDraw(canvas: Canvas) {
-        val ins = 3f * dp
-        canvas.drawRoundRect(ins, ins, width - ins, height - ins, 6f * dp, 6f * dp, borderPaint)
+        val ins = 2f * dp
+        val r   = 8f * dp
+
+        // Background fill
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 13, 14, 20)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bgPaint)
+
+        // Drag active: tinted fill
         if (dragActive) {
-            canvas.drawRoundRect(ins, ins, width - ins, height - ins, 6f * dp, 6f * dp, dragPaint)
+            canvas.drawRoundRect(ins, ins, width - ins, height - ins, r, r, dragPaint)
         }
-        val hint = buildString {
-            append("触控板")
-            if (dragActive) append("  🔒拖拽中")
-            else append("  · 双指滚动 · 三指手势")
+
+        // Gradient border
+        canvas.drawRoundRect(ins, ins, width - ins, height - ins, r - ins, r - ins, borderPaint)
+
+        // Show drag-lock hint only when drag is active
+        if (dragActive) {
+            canvas.drawText("🔒  拖拽中", width / 2f, height / 2f + hintPaint.textSize / 3f, hintPaint)
+        } else {
+            // Center hint text: two lines
+            val line1 = if (dragLockEnabled) "长按后拖动可移动窗口" else "开启拖拽：长按后拖动"
+            val line2 = if (scrollModeEnabled) "滚动模式：单指上下滚动" else "开启滚动：单指变双指"
+            val lineH = hintPaint.textSize * 1.5f
+            canvas.drawText(line1, width / 2f, height / 2f - lineH / 2f + hintPaint.textSize / 3f, hintPaint)
+            canvas.drawText(line2, width / 2f, height / 2f + lineH / 2f + hintPaint.textSize / 3f, hintPaint)
         }
-        canvas.drawText(hint, width / 2f, height / 2f + hintPaint.textSize / 3f, hintPaint)
     }
 
     // ── Touch state ───────────────────────────────────────────────────────────
@@ -280,6 +325,16 @@ class TouchpadView @JvmOverloads constructor(
         val now = SystemClock.uptimeMillis()
         val dx  = ev.x - sfLastX
         val dy  = ev.y - sfLastY
+
+        // Scroll mode: single finger → scroll, no cursor move
+        if (scrollModeEnabled) {
+            sfLastX = ev.x; sfLastY = ev.y
+            if (dy == 0f) return
+            val pyRaw = dy * SCROLL_SCALE
+            val pyI = pyRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+            if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, pyI))
+            return
+        }
 
         if (dragLockEnabled && !dragActive && now >= longPressTime &&
             hypot(ev.x - sfStartX, ev.y - sfStartY) < tapMovePx * 4f

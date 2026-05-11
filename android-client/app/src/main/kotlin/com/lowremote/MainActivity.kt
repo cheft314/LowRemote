@@ -16,6 +16,7 @@ import com.lowremote.network.MdnsDiscovery
 import com.lowremote.session.RemoteSession
 import com.lowremote.ui.DeviceListScreen
 import com.lowremote.ui.RemoteScreen
+import com.lowremote.ui.theme.AppTheme
 
 /**
  * Single activity.
@@ -79,13 +80,15 @@ private fun Root(session: RemoteSession, discovery: MdnsDiscovery) {
         onDispose { }
     }
 
-    when (state) {
-        RemoteSession.State.Idle,
-        RemoteSession.State.Disconnected ->
-            DeviceListScreen(discovery = discovery, onConnect = { d, fps -> session.connect(d, fps) })
+    AppTheme {
+        when (state) {
+            RemoteSession.State.Idle,
+            RemoteSession.State.Disconnected ->
+                DeviceListScreen(discovery = discovery, onConnect = { d, fps -> session.connect(d, fps) })
 
-        RemoteSession.State.Connecting,
-        RemoteSession.State.Connected ->
-            RemoteScreen(session = session, onDisconnect = { session.disconnect() })
+            RemoteSession.State.Connecting,
+            RemoteSession.State.Connected ->
+                RemoteScreen(session = session, onDisconnect = { session.disconnect() })
+        }
     }
 }

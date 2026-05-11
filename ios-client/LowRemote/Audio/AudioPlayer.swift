@@ -88,9 +88,10 @@ final class AudioPlayer {
         do {
             // vphone / 无麦克风设备上 playAndRecord 会失败，先尝试 playback
             // 如果用户想双向音频再考虑 playAndRecord
+            // defaultToSpeaker 仅在 playAndRecord 下有效，playback 模式下不能使用
             try session.setCategory(.playback,
                                     mode: .default,
-                                    options: [.defaultToSpeaker, .allowBluetooth])
+                                    options: [.allowBluetooth])
             try session.setActive(true)
         } catch {
             NSLog("[AudioPlayer] AVAudioSession 配置失败: \(error)")

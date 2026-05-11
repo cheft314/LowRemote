@@ -129,8 +129,12 @@ final class RemoteSession {
         receiver.start()
         sender.attach(fd: receiver.rawFd, host: device.host, port: device.udpPort)
 
-        // 发送 HELLO 让 Mac 记录客户端 UDP 端点
+        // 先发 HELLO，让 Mac 记录客户端 UDP 端点（clientEndpoint）
+        // 必须等 HELLO 实际送出后再建立 TCP 连接并发 FPS 命令
+        // 否则 Mac 收到 FPS 时 clientEndpoint=nil，startStreaming 产生的帧全部丢弃
         sender.sendEvent("HELLO", frameId: nextFrameId())
+        // 等待底层 sendto 完成：sender 内部用 async queue，给 50ms 让 HELLO 包离开发送队列
+        try? await Task.sleep(nanoseconds: 50_000_000)
 
         let ok = await tcp.connect(host: device.host, port: device.tcpPort)
         guard ok else {
@@ -283,10 +287,14 @@ final class RemoteSession {
             if let w = Int(parts.first ?? ""), let h = Int(parts.last ?? "") {
                 remoteResolution = CGSize(width: w, height: h)
                 videoView?.remoteSize = CGSize(width: w, height: h)
+                // RESOLUTION 到达时无论之前是否收到 OK，都（重新）启动解码器
+                // 这样能处理两种时序：
+                //   · 初始连接：RESOLUTION → SCREENS → iOS发FPS → OK（解码器已在此启动）
+                //   · 切屏：OK → startStreaming → RESOLUTION（先 OK 后 RESOLUTION，
+                //     此时解码器为 nil，RESOLUTION 到达后才真正启动）
                 startDecoderIfReady()
             }
         } else if t.hasPrefix("SCREENS:") {
-            // 格式: SCREENS:0:主屏幕:2560x1600,1:屏幕2:1920x1080
             let list = t.dropFirst("SCREENS:".count).split(separator: ",").compactMap { entry -> ScreenInfo? in
                 let parts = entry.split(separator: ":")
                 guard parts.count >= 3,
@@ -299,7 +307,12 @@ final class RemoteSession {
             }
             if !list.isEmpty { screens = list }
         } else if t == "OK" {
-            startDecoderIfReady()
+            // Mac 在两个场景发 OK：
+            //   1. FPS 命令回应（初始连接）：之后会收到 RESOLUTION，届时启动解码器
+            //   2. SCREEN 切换回应：紧接着 startStreaming，再发 RESOLUTION
+            // 两种情况都在 RESOLUTION 处理里统一启动解码器，这里不提前启动，
+            // 避免使用旧分辨率创建解码器后被 RESOLUTION 覆盖。
+            NSLog("[Session] 收到 OK，等待 RESOLUTION 后启动解码器")
         } else if t == "PONG" {
             // 心跳回应，忽略
         } else if t == "FILE_READY" {

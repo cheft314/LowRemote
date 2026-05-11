@@ -36,10 +36,11 @@ final class VideoSurfaceView: UIView {
 
     private func setup() {
         backgroundColor = .black
-        displayLayer.videoGravity = .resizeAspect          // 保持比例，自动加黑边
+        displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
-        // 请求控制时间的时钟 → 立即渲染，延迟最低
-        displayLayer.controlTimebase = makeControlTimebase()
+        // 不使用 controlTimebase：直接依赖 kCMSampleAttachmentKey_DisplayImmediately
+        // 使用 controlTimebase + time=0 时，HostTimeClock 已运行数万秒，
+        // PTS 从 1/600 开始的帧全部被认为是"过期帧"而丢弃。
     }
 
     // MARK: - Feed
@@ -114,21 +115,10 @@ final class VideoSurfaceView: UIView {
         )
     }
 
-    // MARK: - Timebase
-
-    private func makeControlTimebase() -> CMTimebase? {
-        let hostClock = CMClockGetHostTimeClock()
-        var timebase: CMTimebase?
-        guard CMTimebaseCreateWithSourceClock(
-            allocator: kCFAllocatorDefault,
-            sourceClock: hostClock,
-            timebaseOut: &timebase
-        ) == noErr else { return nil }
-        guard let tb = timebase else { return nil }
-        CMTimebaseSetRate(tb, rate: 1.0)
-        CMTimebaseSetTime(tb, time: .zero)
-        return tb
-    }
+    // MARK: - Timebase（已移除，改用 DisplayImmediately 直接渲染）
+    // controlTimebase + CMTimebaseSetTime(time: .zero) 与 HostTimeClock 不兼容：
+    // 系统时钟已运行数万秒，PTS 从 1/600 起的帧全被判为过期。
+    // 使用 kCMSampleAttachmentKey_DisplayImmediately = kCFBooleanTrue 即可立即渲染。
 }
 
 // MARK: - SwiftUI Wrapper

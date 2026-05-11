@@ -141,11 +141,16 @@ final class H265Decoder {
             return
         }
 
+        // 闭包回调：`VTDecompressionSessionDecodeFrame(_:sampleBuffer:flags:infoFlagsOut:outputHandler:)`
+        //（对应 VTDecompressionSessionDecodeFrameWithOutputHandler；勿加 frameOptions——带 frameOptions 的重载仅在 iOS 18+）。
         let flags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
         var infoFlags = VTDecodeInfoFlags()
         let decodeStatus = VTDecompressionSessionDecodeFrame(
-            s, sampleBuffer: sb, flags: flags, infoFlagsOut: &infoFlags
-        ) { [weak self] status, _, imageBuffer, _, _, _ in
+            s,
+            sampleBuffer: sb,
+            flags: flags,
+            infoFlagsOut: &infoFlags
+        ) { [weak self] status, _, imageBuffer, _, _ in
             guard let self = self else { return }
             guard status == noErr, let imageBuffer = imageBuffer else {
                 if status != noErr {

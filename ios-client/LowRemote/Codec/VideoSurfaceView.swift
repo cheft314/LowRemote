@@ -73,10 +73,10 @@ final class VideoSurfaceView: UIView {
         )
         guard let sb = sampleBuf else { return }
 
-        // 标记为已准备好显示
+        // 标记为已准备好显示（必须用 kCFBooleanTrue，Swift Bool 会被静默忽略）
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true)
         if let arr = attachments as? [NSMutableDictionary], let first = arr.first {
-            first[kCMSampleAttachmentKey_DisplayImmediately] = true
+            first[kCMSampleAttachmentKey_DisplayImmediately] = kCFBooleanTrue
         }
 
         DispatchQueue.main.async { [weak self] in

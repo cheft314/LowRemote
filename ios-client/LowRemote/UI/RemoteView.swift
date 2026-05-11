@@ -25,7 +25,7 @@ struct RemoteView: View {
     @State private var sensitivity:     CGFloat = 1.2
     @State private var dragLockEnabled  = false
     @State private var scrollModeEnabled = false
-    @State private var absoluteMode     = false   // 视频区默认：相对（触控板）模式
+    @State private var absoluteMode     = true    // 视频区默认：绝对坐标模式（避免与右侧触控板重叠）
     @State private var showFilePicker   = false
     @State private var videoFrame       = CGRect.zero
 

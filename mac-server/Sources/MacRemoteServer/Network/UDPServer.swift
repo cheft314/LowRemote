@@ -13,6 +13,8 @@ final class UDPServer {
 
     private var serverFd: Int32 = -1
     private var source: DispatchSourceRead?
+    /// `true` when bound as `AF_INET6` dual-stack (`IPV6_V6ONLY=0`).
+    private var useIPv6DualStack: Bool = false
 
     var onControlEvent: ((ControlEvent) -> Void)?
     var onFirstPacketFromClient: ((String, UInt16) -> Void)?
@@ -75,6 +77,7 @@ final class UDPServer {
             return
         }
 
+        useIPv6DualStack = useIPv6
         serverFd = fd
         let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         src.setEventHandler { [weak self] in self?.readPacket() }
@@ -89,6 +92,12 @@ final class UDPServer {
         source?.cancel()
         source = nil
         serverFd = -1
+    }
+
+    /// Call when the TCP control session ends so the next UDP peer always re-triggers
+    /// `onFirstPacketFromClient` (ephemeral port may collide after reconnect).
+    func resetClientAssociation() {
+        knownClientKey = nil
     }
 
     // MARK: - Inbound (same fd, GCD)
@@ -108,20 +117,21 @@ final class UDPServer {
         }
         guard n > 0 else { return }
 
-        // 解析发送方地址
+        // 解析发送方地址（用 sockaddr 读 family，避免假设 ss_family 的字节偏移）
         let (senderIP, senderPort): (String, UInt16) = storageBytes.withUnsafeBytes { ptr in
-            let family = ptr.loadUnaligned(fromByteOffset: 1, as: UInt8.self)
+            let family = ptr.baseAddress!.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0.pointee.sa_family }
             var ipBuf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-            if family == UInt8(AF_INET) {
+            if family == sa_family_t(AF_INET) {
                 var addr4 = ptr.loadUnaligned(fromByteOffset: 0, as: sockaddr_in.self)
                 inet_ntop(AF_INET, &addr4.sin_addr, &ipBuf, socklen_t(INET_ADDRSTRLEN))
                 return (String(cString: ipBuf), UInt16(bigEndian: addr4.sin_port))
-            } else if family == UInt8(AF_INET6) {
+            } else if family == sa_family_t(AF_INET6) {
                 var addr6 = ptr.loadUnaligned(fromByteOffset: 0, as: sockaddr_in6.self)
                 inet_ntop(AF_INET6, &addr6.sin6_addr, &ipBuf, socklen_t(INET6_ADDRSTRLEN))
                 // 检查是否是 IPv4-mapped（::ffff:x.x.x.x），提取 IPv4
                 let ipStr = String(cString: ipBuf)
-                if ipStr.hasPrefix("::ffff:") {
+                let lower = ipStr.lowercased()
+                if lower.hasPrefix("::ffff:") {
                     let v4str = String(ipStr.dropFirst(7))
                     return (v4str, UInt16(bigEndian: addr6.sin6_port))
                 }
@@ -186,13 +196,40 @@ final class UDPServer {
         // 尝试 IPv4
         var addr4 = sockaddr_in()
         if inet_pton(AF_INET, host, &addr4.sin_addr) == 1 {
-            addr4.sin_family = sa_family_t(AF_INET)
-            addr4.sin_port   = port.bigEndian
-            data.withUnsafeBytes { rawBuf in
-                withUnsafeBytes(of: &addr4) { addrPtr in
-                    _ = sendto(serverFd, rawBuf.baseAddress!, data.count, 0,
+            if useIPv6DualStack {
+                // 双栈 IPv6 socket 上对 IPv4 目标必须用 v4-mapped IPv6，否则 macOS 上 sendto 常失败
+                var addr6 = sockaddr_in6()
+                addr6.sin6_family = sa_family_t(AF_INET6)
+                addr6.sin6_port   = port.bigEndian
+                let mapped = "::ffff:\(host)"
+                guard mapped.withCString({ inet_pton(AF_INET6, $0, &addr6.sin6_addr) == 1 }) else {
+                    NSLog("[UDPServer] send: inet_pton v4-mapped failed for \(host)")
+                    return
+                }
+                data.withUnsafeBytes { rawBuf in
+                    guard let base = rawBuf.baseAddress else { return }
+                    let sent = withUnsafeBytes(of: &addr6) { addrPtr in
+                        sendto(serverFd, base, data.count, 0,
+                               addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                               socklen_t(MemoryLayout<sockaddr_in6>.size))
+                    }
+                    if sent < 0 {
+                        NSLog("[UDPServer] sendto (v4-mapped) failed: errno=\(errno) host=\(host):\(port) len=\(data.count)")
+                    }
+                }
+            } else {
+                addr4.sin_family = sa_family_t(AF_INET)
+                addr4.sin_port   = port.bigEndian
+                data.withUnsafeBytes { rawBuf in
+                    guard let base = rawBuf.baseAddress else { return }
+                    let sent = withUnsafeBytes(of: &addr4) { addrPtr in
+                        sendto(serverFd, base, data.count, 0,
                                addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
                                socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
+                    if sent < 0 {
+                        NSLog("[UDPServer] sendto (inet4) failed: errno=\(errno) host=\(host):\(port) len=\(data.count)")
+                    }
                 }
             }
             return
@@ -209,10 +246,14 @@ final class UDPServer {
                 addr6.sin6_scope_id = if_nametoindex(ifname)
             }
             data.withUnsafeBytes { rawBuf in
-                withUnsafeBytes(of: &addr6) { addrPtr in
-                    _ = sendto(serverFd, rawBuf.baseAddress!, data.count, 0,
-                               addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
-                               socklen_t(MemoryLayout<sockaddr_in6>.size))
+                guard let base = rawBuf.baseAddress else { return }
+                let sent = withUnsafeBytes(of: &addr6) { addrPtr in
+                    sendto(serverFd, base, data.count, 0,
+                           addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                           socklen_t(MemoryLayout<sockaddr_in6>.size))
+                }
+                if sent < 0 {
+                    NSLog("[UDPServer] sendto (inet6) failed: errno=\(errno) host=\(host):\(port) len=\(data.count)")
                 }
             }
             return

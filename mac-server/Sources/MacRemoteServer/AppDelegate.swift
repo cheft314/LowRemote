@@ -19,6 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var audioCapture: AudioCaptureManager!   // Mac → Android
 
     private var clientEndpoint: (host: String, port: UInt16)?
+    /// Set when the client requests FPS/SCREEN streaming; capture actually starts in
+    /// `tryStartStreamingIfReady()` once `clientEndpoint` is known from the first UDP datagram.
+    /// Avoids dropping all video when TCP (`FPS:`) is handled before HELLO is read on the UDP queue
+    /// — a race that worsened after signaling TCP accept only at `.ready` (see iOS `RemoteSession`).
+    private var streamingDesired: Bool = false
     private var currentFPS: Int = 60
     private var frameIdCounter: UInt32 = 0
     /// Index of the display currently being streamed. 0 = main display.
@@ -129,8 +134,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         tcpServer.onClientDisconnected = { [weak self] in
             self?.updateStatus("等待连接")
+            self?.streamingDesired = false
             self?.stopStreaming()
             self?.clientEndpoint = nil
+            self?.udpServer.resetClientAssociation()
         }
         // ── File transfer callbacks ────────────────────────────────────────────
         tcpServer.onFileStart = { [weak self] filename, size, _ in
@@ -158,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Remember client's UDP endpoint so we know where to stream video to
             self?.clientEndpoint = (host: host, port: port)
             NSLog("[LowRemote] UDP client endpoint: \(host):\(port)")
+            self?.tryStartStreamingIfReady()
         }
         udpServer.start()
 
@@ -198,7 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 currentFPS = fps
                 updateFPS(fps)
                 tcpServer.broadcast("OK\n")
-                startStreaming(fps: fps)
+                streamingDesired = true
+                tryStartStreamingIfReady()
             }
         } else if trimmed.hasPrefix("SCREEN:") {
             let val = trimmed.dropFirst(7)
@@ -207,7 +216,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if idx >= 0 && idx < displays.count {
                     currentDisplayIndex = idx
                     tcpServer.broadcast("OK\n")
-                    startStreaming(fps: currentFPS)
+                    streamingDesired = true
+                    tryStartStreamingIfReady()
                     // Re-send resolution for new screen
                     let sz = displays[idx].size
                     tcpServer.broadcast("RESOLUTION:\(Int(sz.width)),\(Int(sz.height))\n")
@@ -254,12 +264,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             tcpServer.broadcast("OK\n")
         } else if trimmed == "DISCONNECT" {
+            streamingDesired = false
             stopStreaming()
             tcpServer.disconnectAll()
         }
     }
 
     // MARK: - Streaming
+
+    private func tryStartStreamingIfReady() {
+        guard streamingDesired, clientEndpoint != nil else { return }
+        startStreaming(fps: currentFPS)
+    }
 
     private func startStreaming(fps: Int) {
         stopStreaming()

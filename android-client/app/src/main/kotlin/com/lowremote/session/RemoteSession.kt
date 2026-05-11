@@ -114,6 +114,9 @@ class RemoteSession {
             val sock = receiver.sharedSocket() ?: run { teardown(); return@launch }
             sender.attach(sock, device.host, device.udpPort)
             sender.sendEvent("HELLO", nextEventFrameId())
+            // Let HELLO reach the Mac UDP path before TCP + FPS, so the server can record
+            // clientEndpoint (mirrors iOS RemoteSession; avoids silent video drop if TCP wins the race).
+            delay(50)
 
             if (!tcp.connect(device.host, device.tcpPort)) { teardown(); return@launch }
 

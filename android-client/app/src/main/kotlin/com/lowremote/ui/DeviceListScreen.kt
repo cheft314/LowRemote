@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -380,7 +381,7 @@ private fun MdnsDeviceCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .scale(scale)
             .clip(RoundedCornerShape(14.dp))
             .background(SurfaceL1)
             .border(

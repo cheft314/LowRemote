@@ -299,9 +299,16 @@ class VideoTouchView @JvmOverloads constructor(
     }
 
     private fun evalTwoFingerTap(ev: MotionEvent): Boolean {
-        val elapsed = SystemClock.uptimeMillis() - sfStartT
+        // Strict two-finger tap: short duration AND very little travel.
+        // If either condition fails, treat it as a scroll gesture and do
+        // NOT fire a right-click — this is the fix for the "scroll also
+        // triggers right-click" bug.
+        val elapsed     = SystemClock.uptimeMillis() - sfStartT
         val totalScroll = hypot(tfScrollX, tfScrollY)
-        if (elapsed < TAP_MS + 60 && totalScroll < tapMovePx) {
+        val TWO_FINGER_TAP_MS = 180L
+        val TWO_FINGER_TAP_MOVE_DP = 6f
+        val tapMove = TWO_FINGER_TAP_MOVE_DP * dp
+        if (elapsed < TWO_FINGER_TAP_MS && totalScroll < tapMove) {
             onEvent?.invoke(ControlEvent.MouseClick(ControlEvent.Button.RIGHT))
             performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             // Clear tap chain so the next single-tap isn't confused with

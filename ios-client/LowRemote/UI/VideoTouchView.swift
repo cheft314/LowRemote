@@ -108,7 +108,7 @@ final class VideoTouchView: UIView {
 
         // 若开始移动超过阈值 → 触发绝对鼠标移动
         if dist(pt, tapStartPt) > tapMovePt {
-            onEvent?(.mouseAbsolute(normX: norm.x, normY: norm.y))
+            onEvent?(.mouseAbsolute(normX: Float(norm.x), normY: Float(norm.y)))
         }
     }
 
@@ -122,7 +122,7 @@ final class VideoTouchView: UIView {
         if elapsed < tapMs && moved < tapMovePt {
             // 单击：先移动到绝对位置，再点击
             if let norm = normalize(pt) {
-                onEvent?(.mouseAbsolute(normX: norm.x, normY: norm.y))
+                onEvent?(.mouseAbsolute(normX: Float(norm.x), normY: Float(norm.y)))
             }
             onEvent?(.mouseClick(.left))
             impactLight.impactOccurred()
@@ -159,7 +159,9 @@ final class VideoTouchView: UIView {
 }
 
 private extension CGFloat {
-    func clamped(_ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(max(self, lo), hi) }
+    func clamped(_ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
+        Swift.min(Swift.max(self, lo), hi)
+    }
 }
 
 // MARK: - SwiftUI Wrapper

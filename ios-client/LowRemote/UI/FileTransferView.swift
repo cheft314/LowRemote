@@ -47,7 +47,7 @@ struct FileTransferView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
-                        .foregroundStyle(.lrAccent)
+                        .foregroundStyle(Color.lrAccent)
                 }
             }
         }
@@ -65,14 +65,14 @@ struct FileTransferView: View {
         HStack(spacing: 14) {
             Image(systemName: "folder.badge.plus")
                 .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(.lrAccent)
+                .foregroundStyle(Color.lrAccent)
             VStack(alignment: .leading, spacing: 4) {
                 Text("文件将保存到 Mac 的下载文件夹")
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                 Text("~/Downloads  |  通过 TCP 局域网传输")
                     .font(.lrCaption)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
             }
             Spacer()
         }
@@ -87,13 +87,13 @@ struct FileTransferView: View {
             HStack {
                 Text("已选择 \(selectedURLs.count) 个文件")
                     .font(.lrCaption)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
                 Spacer()
                 Button("清空") {
                     withAnimation(.spring(bounce: 0.2)) { selectedURLs.removeAll() }
                 }
                 .font(.lrButtonSmall)
-                .foregroundStyle(.lrRed)
+                .foregroundStyle(Color.lrRed)
             }
 
             VStack(spacing: 6) {
@@ -116,10 +116,10 @@ struct FileTransferView: View {
                 Text(selectedURLs.isEmpty ? "选择文件" : "继续添加文件")
                     .font(.lrButton)
             }
-            .foregroundStyle(.lrAccent)
+            .foregroundStyle(Color.lrAccent)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .liquidGlass(cornerRadius: 14, borderOpacity: 0.7, tint: .lrAccent)
+            .liquidGlass(cornerRadius: 14, borderOpacity: 0.7, tint: Color.lrAccent)
         }
     }
 
@@ -139,7 +139,7 @@ struct FileTransferView: View {
             .padding(.vertical, 16)
             .background(LinearGradient.lrAccentGradient)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .lrAccent.opacity(0.4), radius: 10, x: 0, y: 4)
+            .shadow(color: Color.lrAccent.opacity(0.4), radius: 10, x: 0, y: 4)
         }
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
@@ -174,17 +174,17 @@ private struct FileRow: View {
         HStack(spacing: 12) {
             Image(systemName: fileIcon)
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.lrAccent)
+                .foregroundStyle(Color.lrAccent)
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(url.lastPathComponent)
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                     .lineLimit(1)
                 Text(fileSize)
                     .font(.lrMono)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
             }
 
             Spacer()
@@ -192,7 +192,7 @@ private struct FileRow: View {
             Button(action: onRemove) {
                 Image(systemName: "minus.circle.fill")
                     .font(.system(size: 18))
-                    .foregroundStyle(.lrRed.opacity(0.8))
+                    .foregroundStyle(Color.lrRed.opacity(0.8))
             }
         }
         .padding(.horizontal, 14)

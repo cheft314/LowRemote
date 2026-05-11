@@ -117,18 +117,17 @@ final class VideoSurfaceView: UIView {
     // MARK: - Timebase
 
     private func makeControlTimebase() -> CMTimebase? {
-        var master: CMClock?
-        CMClockGetHostTimeClock(&master)    // fallback
+        let hostClock = CMClockGetHostTimeClock()
         var timebase: CMTimebase?
-        if let m = master {
-            CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault,
-                                            sourceClock: m, timebaseOut: &timebase)
-        }
-        if let tb = timebase {
-            CMTimebaseSetRate(tb, rate: 1.0)
-            CMTimebaseSetTime(tb, time: .zero)
-        }
-        return timebase
+        guard CMTimebaseCreateWithSourceClock(
+            allocator: kCFAllocatorDefault,
+            sourceClock: hostClock,
+            timebaseOut: &timebase
+        ) == noErr else { return nil }
+        guard let tb = timebase else { return nil }
+        CMTimebaseSetRate(tb, rate: 1.0)
+        CMTimebaseSetTime(tb, time: .zero)
+        return tb
     }
 }
 

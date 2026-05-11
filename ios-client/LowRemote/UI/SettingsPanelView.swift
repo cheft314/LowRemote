@@ -85,18 +85,18 @@ struct SettingsPanelView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("设置")
                     .font(.lrTitle)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                 if let dev = session.screens.first(where: { $0.id == session.currentScreen }) {
                     Text(dev.name)
                         .font(.lrCaption)
-                        .foregroundStyle(.lrAccent)
+                        .foregroundStyle(Color.lrAccent)
                 }
             }
             Spacer()
             Button(action: close) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 22))
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
             }
         }
         .padding(.horizontal, 20)
@@ -132,7 +132,7 @@ struct SettingsPanelView: View {
                     } label: {
                         Text("\(fps)")
                             .font(.lrButtonSmall)
-                            .foregroundStyle(session.fps == fps ? .white : .lrTextSecondary)
+                            .foregroundStyle(session.fps == fps ? .white : Color.lrTextSecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
                             .background {
@@ -162,14 +162,14 @@ struct SettingsPanelView: View {
                             Image(systemName: session.currentScreen == screen.id
                                   ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(session.currentScreen == screen.id
-                                                 ? .lrAccent : .lrTextTertiary)
+                                                 ? Color.lrAccent : Color.lrTextTertiary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(screen.name)
                                     .font(.lrBodyMedium)
-                                    .foregroundStyle(.lrTextPrimary)
+                                    .foregroundStyle(Color.lrTextPrimary)
                                 Text("\(screen.width) × \(screen.height)")
                                     .font(.lrMono)
-                                    .foregroundStyle(.lrTextTertiary)
+                                    .foregroundStyle(Color.lrTextTertiary)
                             }
                             Spacer()
                         }
@@ -223,14 +223,14 @@ struct SettingsPanelView: View {
                     HStack {
                         Text("移动灵敏度")
                             .font(.lrCaption)
-                            .foregroundStyle(.lrTextSecondary)
+                            .foregroundStyle(Color.lrTextSecondary)
                         Spacer()
                         Text(String(format: "%.1f", sensitivity))
                             .font(.lrMono)
-                            .foregroundStyle(.lrAccent)
+                            .foregroundStyle(Color.lrAccent)
                     }
                     Slider(value: $sensitivity, in: 0.5...3.0, step: 0.1)
-                        .tint(.lrAccent)
+                        .tint(Color.lrAccent)
                 }
 
                 Divider().background(Color.lrDivider)
@@ -284,20 +284,20 @@ struct SettingsPanelView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(isSelected ? .lrAccent : .lrTextTertiary)
+                    .foregroundStyle(isSelected ? Color.lrAccent : Color.lrTextTertiary)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.lrBodyMedium)
-                        .foregroundStyle(isSelected ? .lrTextPrimary : .lrTextSecondary)
+                        .foregroundStyle(isSelected ? Color.lrTextPrimary : Color.lrTextSecondary)
                     Text(subtitle)
                         .font(.lrCaption2)
-                        .foregroundStyle(.lrTextTertiary)
+                        .foregroundStyle(Color.lrTextTertiary)
                 }
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.lrAccent)
+                        .foregroundStyle(Color.lrAccent)
                 }
             }
             .padding(.horizontal, 12)
@@ -313,19 +313,19 @@ struct SettingsPanelView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "folder.badge.plus")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.lrAccent)
+                        .foregroundStyle(Color.lrAccent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("发送文件到 Mac")
                             .font(.lrBodyMedium)
-                            .foregroundStyle(.lrTextPrimary)
+                            .foregroundStyle(Color.lrTextPrimary)
                         Text("文件将保存到 ~/Downloads")
                             .font(.lrCaption2)
-                            .foregroundStyle(.lrTextTertiary)
+                            .foregroundStyle(Color.lrTextTertiary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.lrTextTertiary)
+                        .foregroundStyle(Color.lrTextTertiary)
                 }
                 .padding(12)
                 .liquidGlass(cornerRadius: 12)
@@ -337,17 +337,17 @@ struct SettingsPanelView: View {
                     HStack {
                         Text("传输中…")
                             .font(.lrCaption)
-                            .foregroundStyle(.lrTextSecondary)
+                            .foregroundStyle(Color.lrTextSecondary)
                         Spacer()
                         Text("\(Int(progress * 100))%")
                             .font(.lrMono)
-                            .foregroundStyle(.lrAccent)
+                            .foregroundStyle(Color.lrAccent)
                     }
                     ProgressView(value: progress)
-                        .tint(.lrAccent)
+                        .tint(Color.lrAccent)
                 }
                 .padding(12)
-                .liquidGlass(cornerRadius: 12, tint: .lrAccent)
+                .liquidGlass(cornerRadius: 12, tint: Color.lrAccent)
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
@@ -366,10 +366,10 @@ struct SettingsPanelView: View {
                 Text("断开连接")
                     .font(.lrButton)
             }
-            .foregroundStyle(.lrRed)
+            .foregroundStyle(Color.lrRed)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .liquidGlass(cornerRadius: 14, tint: .lrRed)
+            .liquidGlass(cornerRadius: 14, tint: Color.lrRed)
         }
     }
 
@@ -396,10 +396,10 @@ private struct SettingsSection<Content: View>: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.lrAccent)
+                    .foregroundStyle(Color.lrAccent)
                 Text(title)
                     .font(.lrCaption)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
                     .textCase(.uppercase)
                     .kerning(0.5)
             }
@@ -418,20 +418,20 @@ private struct ToggleRow: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(isOn ? .lrAccent : .lrTextTertiary)
+                .foregroundStyle(isOn ? Color.lrAccent : Color.lrTextTertiary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                 Text(subtitle)
                     .font(.lrCaption2)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
             }
             Spacer()
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(.lrAccent)
+                .tint(Color.lrAccent)
         }
     }
 }

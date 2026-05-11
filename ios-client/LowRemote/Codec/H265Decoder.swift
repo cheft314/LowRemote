@@ -115,8 +115,11 @@ final class H265Decoder {
         guard status == noErr, let sb = sampleBuf else { return }
 
         let flags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression, ._EnableTemporalProcessing]
-        VTDecompressionSessionDecodeFrame(s, sampleBuffer: sb, flags: flags,
-                                          infoFlagsOut: nil, outputHandler: nil)
+        _ = VTDecompressionSessionDecodeFrame(s, sampleBuffer: sb, flags: flags, infoFlagsOut: nil) { [weak self] status, _, imageBuffer, _, _, _ in
+            guard let self else { return }
+            guard status == noErr, let imageBuffer else { return }
+            self.onDecodedFrame?(imageBuffer)
+        }
     }
 
     // MARK: - Session management
@@ -135,18 +138,14 @@ final class H265Decoder {
             kCVPixelBufferMetalCompatibilityKey: true,
         ]
 
-        var outputCallback = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: Self.vtCallback,
-            decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
-        )
-
         var s: VTDecompressionSession?
+        // Session must use nil outputCallback when using closure-based VTDecompressionSessionDecodeFrame.
         let st = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: newDesc,
             decoderSpecification: nil,
             imageBufferAttributes: attrs as CFDictionary,
-            outputCallback: &outputCallback,
+            outputCallback: nil,
             decompressionSessionOut: &s
         )
         if st == noErr, let s = s {
@@ -159,14 +158,6 @@ final class H265Decoder {
         } else {
             NSLog("[H265Decoder] VTDecompressionSessionCreate failed: \(st)")
         }
-    }
-
-    // MARK: - VT Callback
-
-    private static let vtCallback: VTDecompressionOutputCallback = { refCon, _, status, _, imageBuffer, _, _ in
-        guard let refCon = refCon, status == noErr, let pixelBuffer = imageBuffer else { return }
-        let decoder = Unmanaged<H265Decoder>.fromOpaque(refCon).takeUnretainedValue()
-        decoder.onDecodedFrame?(pixelBuffer)
     }
 
     // MARK: - Annex-B helpers

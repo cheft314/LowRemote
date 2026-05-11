@@ -94,10 +94,10 @@ struct DeviceListView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("LowRemote")
                             .font(.lrTitle)
-                            .foregroundStyle(.lrTextPrimary)
+                            .foregroundStyle(Color.lrTextPrimary)
                         Text("局域网 Mac 远程控制")
                             .font(.lrCaption)
-                            .foregroundStyle(.lrTextSecondary)
+                            .foregroundStyle(Color.lrTextSecondary)
                     }
                 }
                 Spacer()
@@ -105,7 +105,7 @@ struct DeviceListView: View {
                 Button { startScan() } label: {
                     Image(systemName: isScanning ? "antenna.radiowaves.left.and.right" : "arrow.clockwise")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.lrAccent)
+                        .foregroundStyle(Color.lrAccent)
                         .frame(width: 40, height: 40)
                         .glassButton(cornerRadius: 12)
                         .symbolEffect(.pulse, isActive: isScanning)
@@ -125,7 +125,7 @@ struct DeviceListView: View {
                 } label: {
                     Text("\(fps) fps")
                         .font(.lrButtonSmall)
-                        .foregroundStyle(selectedFps == fps ? .white : .lrTextSecondary)
+                        .foregroundStyle(selectedFps == fps ? .white : Color.lrTextSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .background {
@@ -146,18 +146,18 @@ struct DeviceListView: View {
     private var connectingBanner: some View {
         HStack(spacing: 12) {
             ProgressView()
-                .tint(.lrAccent)
+                .tint(Color.lrAccent)
             Text("正在连接…")
                 .font(.lrBodyMedium)
-                .foregroundStyle(.lrTextSecondary)
+                .foregroundStyle(Color.lrTextSecondary)
             Spacer()
             Button("取消") { session.disconnect() }
                 .font(.lrButton)
-                .foregroundStyle(.lrRed)
+                .foregroundStyle(Color.lrRed)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .liquidGlass(cornerRadius: 12, tint: .lrOrange)
+        .liquidGlass(cornerRadius: 12, tint: Color.lrOrange)
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 
@@ -192,14 +192,14 @@ struct DeviceListView: View {
         HStack(spacing: 14) {
             Image(systemName: "antenna.radiowaves.left.and.right.slash")
                 .font(.system(size: 28))
-                .foregroundStyle(.lrTextTertiary)
+                .foregroundStyle(Color.lrTextTertiary)
             VStack(alignment: .leading, spacing: 4) {
                 Text("未发现设备")
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextSecondary)
+                    .foregroundStyle(Color.lrTextSecondary)
                 Text("请确保 Mac 已启动 LowRemote Server，且在同一局域网")
                     .font(.lrCaption)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
             }
         }
         .padding(16)
@@ -216,7 +216,7 @@ struct DeviceListView: View {
             if store.hosts.isEmpty {
                 Text("连接后可保存主机，方便下次快速连接")
                     .font(.lrCaption)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
                     .padding(.horizontal, 4)
             } else {
                 VStack(spacing: 8) {
@@ -242,14 +242,14 @@ struct DeviceListView: View {
             HStack(spacing: 10) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.lrAccent)
+                    .foregroundStyle(Color.lrAccent)
                 Text("手动输入 IP 地址")
                     .font(.lrButton)
-                    .foregroundStyle(.lrAccent)
+                    .foregroundStyle(Color.lrAccent)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .liquidGlass(cornerRadius: 14, borderOpacity: 0.7, tint: .lrAccent)
+            .liquidGlass(cornerRadius: 14, borderOpacity: 0.7, tint: Color.lrAccent)
         }
     }
 
@@ -259,14 +259,14 @@ struct DeviceListView: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.lrAccent)
+                .foregroundStyle(Color.lrAccent)
             Text(title)
                 .font(.lrTitle2)
-                .foregroundStyle(.lrTextPrimary)
+                .foregroundStyle(Color.lrTextPrimary)
             Spacer()
             Text(subtitle)
                 .font(.lrCaption)
-                .foregroundStyle(.lrTextTertiary)
+                .foregroundStyle(Color.lrTextTertiary)
         }
     }
 
@@ -339,18 +339,18 @@ private struct DeviceRow: View {
                     .frame(width: 44, height: 44)
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.lrAccent)
+                    .foregroundStyle(Color.lrAccent)
             }
 
             // 名称 + IP
             VStack(alignment: .leading, spacing: 3) {
                 Text(device.name)
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                     .lineLimit(1)
                 Text("\(device.host):\(device.tcpPort)")
                     .font(.lrMono)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
             }
 
             Spacer()
@@ -358,13 +358,13 @@ private struct DeviceRow: View {
             // 操作按钮组
             HStack(spacing: 8) {
                 if let onSave = onSave, !isSaved {
-                    iconButton("bookmark", color: .lrAccent, action: onSave)
+                    iconButton("bookmark", color: Color.lrAccent, action: onSave)
                 }
                 if let onEdit = onEdit {
-                    iconButton("pencil", color: .lrTextSecondary, action: onEdit)
+                    iconButton("pencil", color: Color.lrTextSecondary, action: onEdit)
                 }
                 if let onDelete = onDelete {
-                    iconButton("trash", color: .lrRed, action: onDelete)
+                    iconButton("trash", color: Color.lrRed, action: onDelete)
                 }
                 // 连接按钮
                 Button(action: onConnect) {
@@ -459,7 +459,7 @@ private struct ManualHostSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
-                        .foregroundStyle(.lrAccent)
+                        .foregroundStyle(Color.lrAccent)
                 }
             }
         }
@@ -478,11 +478,11 @@ private struct ManualHostSheet: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.lrAccent)
+                .foregroundStyle(Color.lrAccent)
                 .frame(width: 24)
             TextField(placeholder, text: text)
                 .font(.lrBody)
-                .foregroundStyle(.lrTextPrimary)
+                .foregroundStyle(Color.lrTextPrimary)
                 .focused(focus, equals: field)
                 .keyboardType(keyboard)
                 .autocorrectionDisabled()
@@ -530,7 +530,7 @@ private struct EditHostSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }.foregroundStyle(.lrAccent)
+                    Button("取消") { dismiss() }.foregroundStyle(Color.lrAccent)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
@@ -539,7 +539,7 @@ private struct EditHostSheet: View {
                                             udpPort: device.udpPort))
                     }
                     .font(Font.lrButton)
-                    .foregroundStyle(.lrAccent)
+                    .foregroundStyle(Color.lrAccent)
                 }
             }
         }
@@ -552,11 +552,11 @@ private struct EditHostSheet: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.lrAccent)
+                .foregroundStyle(Color.lrAccent)
                 .frame(width: 22)
             TextField(placeholder, text: text)
                 .font(.lrBody)
-                .foregroundStyle(.lrTextPrimary)
+                .foregroundStyle(Color.lrTextPrimary)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
         }

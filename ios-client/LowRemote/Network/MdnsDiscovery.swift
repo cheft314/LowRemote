@@ -85,8 +85,16 @@ final class MdnsDiscovery {
                     // 解析 TXT Record
                     // NWBrowser result 的 metadata 里直接携带 NWTXTRecord，无需再包装
                     if case .bonjour(let txtRecord) = result.metadata {
-                        if let s = txtRecord.getEntry(for: "tcp_port"), let p = UInt16(s) { tcpPort = p }
-                        if let s = txtRecord.getEntry(for: "udp_port"), let p = UInt16(s) { udpPort = p }
+                        if let e = txtRecord.getEntry(for: "tcp_port"),
+                           case .string(let s) = e,
+                           let p = UInt16(s) {
+                            tcpPort = p
+                        }
+                        if let e = txtRecord.getEntry(for: "udp_port"),
+                           case .string(let s) = e,
+                           let p = UInt16(s) {
+                            udpPort = p
+                        }
                     }
 
                     let device = RemoteDevice(

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct LowRemoteApp: App {
@@ -77,9 +78,11 @@ private struct HardwareKeyboardHandler: UIViewRepresentable {
     }
 }
 
-final class KeyboardView: UIView {
+final class KeyboardView: UIView, UIKeyInput {
 
     var onEvent: ((ControlEvent) -> Void)?
+
+    var hasText: Bool { false }
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -88,50 +91,56 @@ final class KeyboardView: UIView {
         if window != nil { becomeFirstResponder() }
     }
 
+    private static let keyCommandSpecs: [(input: String, modifiers: UIKeyModifierFlags, code: UInt16, title: String)] = [
+        ("c",   .command,  MacKeyCode.c,       "复制"),
+        ("v",   .command,  MacKeyCode.v,       "粘贴"),
+        ("z",   .command,  MacKeyCode.z,       "撤销"),
+        ("x",   .command,  MacKeyCode.x,       "剪切"),
+        ("a",   .command,  MacKeyCode.a,       "全选"),
+        ("f",   .command,  MacKeyCode.f,       "查找"),
+        ("\t",  .command,  MacKeyCode.tab,     "切换应用"),
+        (" ",   .command,  MacKeyCode.space,   "Spotlight"),
+        (UIKeyCommand.inputEscape, [], MacKeyCode.escape, "取消"),
+        (UIKeyCommand.inputUpArrow,    [], MacKeyCode.upArrow,    "上"),
+        (UIKeyCommand.inputDownArrow,  [], MacKeyCode.downArrow,  "下"),
+        (UIKeyCommand.inputLeftArrow,  [], MacKeyCode.leftArrow,  "左"),
+        (UIKeyCommand.inputRightArrow, [], MacKeyCode.rightArrow, "右"),
+    ]
+
+    private static let keyCodeLookup: [String: UInt16] = {
+        var map: [String: UInt16] = [:]
+        for spec in KeyboardView.keyCommandSpecs {
+            map[KeyboardView.lookupKey(spec.modifiers, spec.input)] = spec.code
+        }
+        return map
+    }()
+
+    private static func lookupKey(_ modifiers: UIKeyModifierFlags, _ input: String) -> String {
+        "\(modifiers.rawValue)|\(input)"
+    }
+
     // 构建 key commands：覆盖常用快捷键
     override var keyCommands: [UIKeyCommand]? {
-        let defs: [(String, UIKeyModifierFlags, UInt16, String)] = [
-            // (input, modifier, cgKeyCode, discoverabilityTitle)
-            ("c",   .command,  MacKeyCode.c,       "复制"),
-            ("v",   .command,  MacKeyCode.v,       "粘贴"),
-            ("z",   .command,  MacKeyCode.z,       "撤销"),
-            ("x",   .command,  MacKeyCode.x,       "剪切"),
-            ("a",   .command,  MacKeyCode.a,       "全选"),
-            ("f",   .command,  MacKeyCode.f,       "查找"),
-            ("\t",  .command,  MacKeyCode.tab,     "切换应用"),
-            (" ",   .command,  MacKeyCode.space,   "Spotlight"),
-            (UIKeyCommand.inputEscape, [], MacKeyCode.escape, "取消"),
-            (UIKeyCommand.inputUpArrow,    [], MacKeyCode.upArrow,    "上"),
-            (UIKeyCommand.inputDownArrow,  [], MacKeyCode.downArrow,  "下"),
-            (UIKeyCommand.inputLeftArrow,  [], MacKeyCode.leftArrow,  "左"),
-            (UIKeyCommand.inputRightArrow, [], MacKeyCode.rightArrow, "右"),
-        ]
-
-        return defs.map { (input, mod, code, title) in
-            let cmd = UIKeyCommand(
-                title:           title,
-                action:          #selector(handleKey(_:)),
-                input:           input,
-                modifierFlags:   mod,
-                discoverabilityTitle: title
+        Self.keyCommandSpecs.map { spec in
+            UIKeyCommand(
+                title: spec.title,
+                image: nil,
+                action: #selector(handleKey(_:)),
+                input: spec.input,
+                modifierFlags: spec.modifiers,
+                propertyList: nil
             )
-            // 将 cgKeyCode 存入 identifier 方便回调时取用
-            cmd.identifier = UIAction.Identifier(rawValue: "\(code)|\(mod.rawValue)")
-            return cmd
         }
     }
 
     @objc private func handleKey(_ command: UIKeyCommand) {
-        guard let id = command.identifier?.rawValue else { return }
-        let parts = id.split(separator: "|")
-        guard parts.count == 2,
-              let code  = UInt16(parts[0]),
-              let modRaw = Int(parts[1]) else { return }
+        let mods = command.modifierFlags
+        guard let input = command.input else { return }
+        let key = Self.lookupKey(mods, input)
+        guard let code = Self.keyCodeLookup[key] else { return }
 
-        let mods  = UIKeyModifierFlags(rawValue: modRaw)
         let event: ControlEvent
-
-        if mods.contains(.command) {
+        if mods.contains(UIKeyModifierFlags.command) {
             event = .keyCombo(mods: "cmd", code: code)
         } else {
             event = .keyPress(code)
@@ -139,13 +148,12 @@ final class KeyboardView: UIView {
         onEvent?(event)
     }
 
-    // 普通文字输入（非快捷键）
-    override func insertText(_ text: String) {
+    func insertText(_ text: String) {
         guard !text.isEmpty else { return }
         onEvent?(.typeText(text))
     }
 
-    override func deleteBackward() {
+    func deleteBackward() {
         onEvent?(.keyPress(MacKeyCode.delete))
     }
 }

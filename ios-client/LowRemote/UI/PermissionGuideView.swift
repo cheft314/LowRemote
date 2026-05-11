@@ -39,10 +39,10 @@ struct PermissionGuideView: View {
                             .foregroundStyle(LinearGradient.lrAccentGradient)
                         Text("应用权限")
                             .font(.lrLargeTitle)
-                            .foregroundStyle(.lrTextPrimary)
+                            .foregroundStyle(Color.lrTextPrimary)
                         Text("LowRemote 需要以下权限才能正常使用")
                             .font(.lrBody)
-                            .foregroundStyle(.lrTextSecondary)
+                            .foregroundStyle(Color.lrTextSecondary)
                             .multilineTextAlignment(.center)
                     }
                     .padding(.top, 8)
@@ -70,10 +70,10 @@ struct PermissionGuideView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle")
                             .font(.system(size: 13))
-                            .foregroundStyle(.lrTextTertiary)
+                            .foregroundStyle(Color.lrTextTertiary)
                         Text("如果弹窗未出现，请前往「设置」→「LowRemote」手动开启")
                             .font(.lrCaption)
-                            .foregroundStyle(.lrTextTertiary)
+                            .foregroundStyle(Color.lrTextTertiary)
                     }
                     .padding(12)
                     .liquidGlass(cornerRadius: 10, borderOpacity: 0.5)
@@ -91,7 +91,7 @@ struct PermissionGuideView: View {
                             .padding(.vertical, 16)
                             .background(LinearGradient.lrAccentGradient)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .shadow(color: .lrAccent.opacity(0.4), radius: 10, x: 0, y: 4)
+                            .shadow(color: Color.lrAccent.opacity(0.4), radius: 10, x: 0, y: 4)
                     }
 
                     // 设置跳转
@@ -102,7 +102,7 @@ struct PermissionGuideView: View {
                     } label: {
                         Text("前往系统设置")
                             .font(.lrCaption)
-                            .foregroundStyle(.lrAccent)
+                            .foregroundStyle(Color.lrAccent)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -188,10 +188,10 @@ private struct PermissionRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                 Text(desc)
                     .font(.lrCaption)
-                    .foregroundStyle(.lrTextTertiary)
+                    .foregroundStyle(Color.lrTextTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -201,7 +201,7 @@ private struct PermissionRow: View {
             statusBadge
         }
         .padding(14)
-        .liquidGlass(cornerRadius: 14, tint: status == .denied ? .lrRed : .clear)
+        .liquidGlass(cornerRadius: 14, tint: status == .denied ? Color.lrRed : .clear)
     }
 
     private var iconBg: Color {
@@ -226,7 +226,7 @@ private struct PermissionRow: View {
         case .granted:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 22))
-                .foregroundStyle(.lrGreen)
+                .foregroundStyle(Color.lrGreen)
 
         case .denied:
             Button("去设置") {
@@ -253,7 +253,7 @@ private struct PermissionRow: View {
         case .optional:
             Text("可选")
                 .font(.lrCaption)
-                .foregroundStyle(.lrTextTertiary)
+                .foregroundStyle(Color.lrTextTertiary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .glassButton(cornerRadius: 8)

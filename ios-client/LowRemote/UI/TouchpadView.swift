@@ -30,7 +30,7 @@ final class TouchpadView: UIView {
     private static let tapMovePt:      CGFloat      = 8
     private static let mfSwipePt:      CGFloat      = 18
     private static let scrollScale:    CGFloat      = 2.5
-    private static let scrollMaxPx:    Int          = 80
+    private static let scrollMaxPx:    CGFloat      = 80
     private static let flingDecay:     CGFloat      = 0.82
     private static let flingMinPx:     CGFloat      = 1.5
     private static let twoTapMs:       TimeInterval = 0.180

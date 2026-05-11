@@ -272,12 +272,12 @@ struct RemoteView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(deviceName)
                     .font(.lrBodyMedium)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                     .lineLimit(1)
                 if let res = session.remoteResolution {
                     Text("\(Int(res.width)) × \(Int(res.height))")
                         .font(.lrMono)
-                        .foregroundStyle(.lrTextTertiary)
+                        .foregroundStyle(Color.lrTextTertiary)
                 }
             }
         }
@@ -286,7 +286,7 @@ struct RemoteView: View {
     private var fpsIndicator: some View {
         Text("\(session.fps) fps")
             .font(.lrMono)
-            .foregroundStyle(.lrAccent)
+            .foregroundStyle(Color.lrAccent)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .glassButton(cornerRadius: 8, isActive: false)
@@ -299,7 +299,7 @@ struct RemoteView: View {
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.lrTextPrimary)
+                .foregroundStyle(Color.lrTextPrimary)
                 .frame(width: 36, height: 36)
                 .glassButton(cornerRadius: 9)
         }

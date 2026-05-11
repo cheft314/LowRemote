@@ -7,280 +7,422 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A001 /* LowRemoteApp.swift */ = {isa = PBXBuildFile; fileRef = F001 /* LowRemoteApp.swift */; };
-		A002 /* AppState.swift */ = {isa = PBXBuildFile; fileRef = F002 /* AppState.swift */; };
-		A003 /* RemoteDevice.swift */ = {isa = PBXBuildFile; fileRef = F003 /* RemoteDevice.swift */; };
-		A004 /* ControlEvent.swift */ = {isa = PBXBuildFile; fileRef = F004 /* ControlEvent.swift */; };
-		A005 /* Packet.swift */ = {isa = PBXBuildFile; fileRef = F005 /* Packet.swift */; };
-		A006 /* MacKeyCodes.swift */ = {isa = PBXBuildFile; fileRef = F006 /* MacKeyCodes.swift */; };
-		A007 /* MdnsDiscovery.swift */ = {isa = PBXBuildFile; fileRef = F007 /* MdnsDiscovery.swift */; };
-		A008 /* TcpClient.swift */ = {isa = PBXBuildFile; fileRef = F008 /* TcpClient.swift */; };
-		A009 /* UdpReceiver.swift */ = {isa = PBXBuildFile; fileRef = F009 /* UdpReceiver.swift */; };
-		A010 /* UdpSender.swift */ = {isa = PBXBuildFile; fileRef = F010 /* UdpSender.swift */; };
-		A011 /* FrameAssembler.swift */ = {isa = PBXBuildFile; fileRef = F011 /* FrameAssembler.swift */; };
-		A012 /* H265Decoder.swift */ = {isa = PBXBuildFile; fileRef = F012 /* H265Decoder.swift */; };
-		A013 /* VideoSurfaceView.swift */ = {isa = PBXBuildFile; fileRef = F013 /* VideoSurfaceView.swift */; };
-		A014 /* RemoteSession.swift */ = {isa = PBXBuildFile; fileRef = F014 /* RemoteSession.swift */; };
-		A015 /* SavedHostsStore.swift */ = {isa = PBXBuildFile; fileRef = F015 /* SavedHostsStore.swift */; };
-		A016 /* AudioPlayer.swift */ = {isa = PBXBuildFile; fileRef = F016 /* AudioPlayer.swift */; };
-		A017 /* AudioCapture.swift */ = {isa = PBXBuildFile; fileRef = F017 /* AudioCapture.swift */; };
-		A018 /* TouchpadView.swift */ = {isa = PBXBuildFile; fileRef = F018 /* TouchpadView.swift */; };
-		A019 /* VideoTouchView.swift */ = {isa = PBXBuildFile; fileRef = F019 /* VideoTouchView.swift */; };
-		A020 /* LiquidGlassModifier.swift */ = {isa = PBXBuildFile; fileRef = F020 /* LiquidGlassModifier.swift */; };
-		A021 /* Colors.swift */ = {isa = PBXBuildFile; fileRef = F021 /* Colors.swift */; };
-		A022 /* Typography.swift */ = {isa = PBXBuildFile; fileRef = F022 /* Typography.swift */; };
-		A023 /* DeviceListView.swift */ = {isa = PBXBuildFile; fileRef = F023 /* DeviceListView.swift */; };
-		A024 /* RemoteView.swift */ = {isa = PBXBuildFile; fileRef = F024 /* RemoteView.swift */; };
-		A025 /* ShortcutKeyboardView.swift */ = {isa = PBXBuildFile; fileRef = F025 /* ShortcutKeyboardView.swift */; };
-		A026 /* SettingsPanelView.swift */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsPanelView.swift */; };
-		A027 /* FileTransferView.swift */ = {isa = PBXBuildFile; fileRef = F027 /* FileTransferView.swift */; };
-		A028 /* PermissionGuideView.swift */ = {isa = PBXBuildFile; fileRef = F028 /* PermissionGuideView.swift */; };
+		A001 /* LowRemoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* LowRemoteApp.swift */; };
+		A002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* AppState.swift */; };
+		A003 /* RemoteDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* RemoteDevice.swift */; };
+		A004 /* ControlEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004 /* ControlEvent.swift */; };
+		A005 /* Packet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005 /* Packet.swift */; };
+		A006 /* MacKeyCodes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* MacKeyCodes.swift */; };
+		A007 /* MdnsDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* MdnsDiscovery.swift */; };
+		A008 /* TcpClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008 /* TcpClient.swift */; };
+		A009 /* UdpReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F009 /* UdpReceiver.swift */; };
+		A010 /* UdpSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = F010 /* UdpSender.swift */; };
+		A011 /* FrameAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F011 /* FrameAssembler.swift */; };
+		A012 /* H265Decoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F012 /* H265Decoder.swift */; };
+		A013 /* VideoSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F013 /* VideoSurfaceView.swift */; };
+		A014 /* RemoteSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F014 /* RemoteSession.swift */; };
+		A015 /* SavedHostsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F015 /* SavedHostsStore.swift */; };
+		A016 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016 /* AudioPlayer.swift */; };
+		A017 /* AudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* AudioCapture.swift */; };
+		A018 /* TouchpadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018 /* TouchpadView.swift */; };
+		A019 /* VideoTouchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F019 /* VideoTouchView.swift */; };
+		A020 /* LiquidGlassModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F020 /* LiquidGlassModifier.swift */; };
+		A021 /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* Colors.swift */; };
+		A022 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = F022 /* Typography.swift */; };
+		A023 /* DeviceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F023 /* DeviceListView.swift */; };
+		A024 /* RemoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* RemoteView.swift */; };
+		A025 /* ShortcutKeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* ShortcutKeyboardView.swift */; };
+		A026 /* SettingsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* SettingsPanelView.swift */; };
+		A027 /* FileTransferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F027 /* FileTransferView.swift */; };
+		A028 /* PermissionGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F028 /* PermissionGuideView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		F001 /* LowRemoteApp.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LowRemoteApp.swift; sourceTree = "<group>"; };
-		F002 /* AppState.swift */            = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
-		F003 /* RemoteDevice.swift */        = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDevice.swift; sourceTree = "<group>"; };
-		F004 /* ControlEvent.swift */        = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlEvent.swift; sourceTree = "<group>"; };
-		F005 /* Packet.swift */              = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Packet.swift; sourceTree = "<group>"; };
-		F006 /* MacKeyCodes.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacKeyCodes.swift; sourceTree = "<group>"; };
-		F007 /* MdnsDiscovery.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MdnsDiscovery.swift; sourceTree = "<group>"; };
-		F008 /* TcpClient.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TcpClient.swift; sourceTree = "<group>"; };
-		F009 /* UdpReceiver.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpReceiver.swift; sourceTree = "<group>"; };
-		F010 /* UdpSender.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpSender.swift; sourceTree = "<group>"; };
-		F011 /* FrameAssembler.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameAssembler.swift; sourceTree = "<group>"; };
-		F012 /* H265Decoder.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H265Decoder.swift; sourceTree = "<group>"; };
-		F013 /* VideoSurfaceView.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSurfaceView.swift; sourceTree = "<group>"; };
-		F014 /* RemoteSession.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSession.swift; sourceTree = "<group>"; };
-		F015 /* SavedHostsStore.swift */     = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHostsStore.swift; sourceTree = "<group>"; };
-		F016 /* AudioPlayer.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
-		F017 /* AudioCapture.swift */        = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
-		F018 /* TouchpadView.swift */        = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchpadView.swift; sourceTree = "<group>"; };
-		F019 /* VideoTouchView.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoTouchView.swift; sourceTree = "<group>"; };
+		EAPP /* LowRemote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LowRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EINFO /* LowRemote-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "LowRemote-Info.plist"; sourceTree = "<group>"; };
+		F001 /* LowRemoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LowRemoteApp.swift; sourceTree = "<group>"; };
+		F002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		F003 /* RemoteDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDevice.swift; sourceTree = "<group>"; };
+		F004 /* ControlEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlEvent.swift; sourceTree = "<group>"; };
+		F005 /* Packet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Packet.swift; sourceTree = "<group>"; };
+		F006 /* MacKeyCodes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacKeyCodes.swift; sourceTree = "<group>"; };
+		F007 /* MdnsDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MdnsDiscovery.swift; sourceTree = "<group>"; };
+		F008 /* TcpClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TcpClient.swift; sourceTree = "<group>"; };
+		F009 /* UdpReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpReceiver.swift; sourceTree = "<group>"; };
+		F010 /* UdpSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpSender.swift; sourceTree = "<group>"; };
+		F011 /* FrameAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameAssembler.swift; sourceTree = "<group>"; };
+		F012 /* H265Decoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H265Decoder.swift; sourceTree = "<group>"; };
+		F013 /* VideoSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSurfaceView.swift; sourceTree = "<group>"; };
+		F014 /* RemoteSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSession.swift; sourceTree = "<group>"; };
+		F015 /* SavedHostsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHostsStore.swift; sourceTree = "<group>"; };
+		F016 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		F017 /* AudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
+		F018 /* TouchpadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchpadView.swift; sourceTree = "<group>"; };
+		F019 /* VideoTouchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoTouchView.swift; sourceTree = "<group>"; };
 		F020 /* LiquidGlassModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassModifier.swift; sourceTree = "<group>"; };
-		F021 /* Colors.swift */              = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
-		F022 /* Typography.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
-		F023 /* DeviceListView.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceListView.swift; sourceTree = "<group>"; };
-		F024 /* RemoteView.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteView.swift; sourceTree = "<group>"; };
+		F021 /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
+		F022 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
+		F023 /* DeviceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceListView.swift; sourceTree = "<group>"; };
+		F024 /* RemoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteView.swift; sourceTree = "<group>"; };
 		F025 /* ShortcutKeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutKeyboardView.swift; sourceTree = "<group>"; };
-		F026 /* SettingsPanelView.swift */   = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelView.swift; sourceTree = "<group>"; };
-		F027 /* FileTransferView.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferView.swift; sourceTree = "<group>"; };
+		F026 /* SettingsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelView.swift; sourceTree = "<group>"; };
+		F027 /* FileTransferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferView.swift; sourceTree = "<group>"; };
 		F028 /* PermissionGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionGuideView.swift; sourceTree = "<group>"; };
-		EINFO /* LowRemote-Info.plist */     = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "LowRemote-Info.plist"; sourceTree = "<group>"; };
-		EAPP  /* LowRemote.app */            = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LowRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
-		GROOT = {
+		GAPP /* App */ = {
 			isa = PBXGroup;
 			children = (
-				GSRC,
-				GPROD,
+				F001 /* LowRemoteApp.swift */,
+				F002 /* AppState.swift */,
 			);
+			path = App;
 			sourceTree = "<group>";
 		};
-		GPROD = {
+		GAUDIO /* Audio */ = {
 			isa = PBXGroup;
-			children = (EAPP,);
+			children = (
+				F016 /* AudioPlayer.swift */,
+				F017 /* AudioCapture.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		GCODEC /* Codec */ = {
+			isa = PBXGroup;
+			children = (
+				F011 /* FrameAssembler.swift */,
+				F012 /* H265Decoder.swift */,
+				F013 /* VideoSurfaceView.swift */,
+			);
+			path = Codec;
+			sourceTree = "<group>";
+		};
+		GMODEL /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				F003 /* RemoteDevice.swift */,
+				F004 /* ControlEvent.swift */,
+				F005 /* Packet.swift */,
+				F006 /* MacKeyCodes.swift */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		GNET /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				F007 /* MdnsDiscovery.swift */,
+				F008 /* TcpClient.swift */,
+				F009 /* UdpReceiver.swift */,
+				F010 /* UdpSender.swift */,
+			);
+			path = Network;
+			sourceTree = "<group>";
+		};
+		GPROD /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EAPP /* LowRemote.app */,
+			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		GSRC = {
+		GROOT = {
 			isa = PBXGroup;
 			children = (
-				GAPP,
-				GMODEL,
-				GNET,
-				GCODEC,
-				GAUDIO,
-				GSESSION,
-				GUI,
-				EINFO,
+				GSRC /* LowRemote */,
+				GPROD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		GSESSION /* Session */ = {
+			isa = PBXGroup;
+			children = (
+				F014 /* RemoteSession.swift */,
+				F015 /* SavedHostsStore.swift */,
+			);
+			path = Session;
+			sourceTree = "<group>";
+		};
+		GSRC /* LowRemote */ = {
+			isa = PBXGroup;
+			children = (
+				GAPP /* App */,
+				GMODEL /* Model */,
+				GNET /* Network */,
+				GCODEC /* Codec */,
+				GAUDIO /* Audio */,
+				GSESSION /* Session */,
+				GUI /* UI */,
+				EINFO /* LowRemote-Info.plist */,
 			);
 			path = LowRemote;
 			sourceTree = "<group>";
 		};
-		GAPP = {
+		GTHEME /* Theme */ = {
 			isa = PBXGroup;
-			children = (F001, F002);
-			path = App;
-			sourceTree = "<group>";
-		};
-		GMODEL = {
-			isa = PBXGroup;
-			children = (F003, F004, F005, F006);
-			path = Model;
-			sourceTree = "<group>";
-		};
-		GNET = {
-			isa = PBXGroup;
-			children = (F007, F008, F009, F010);
-			path = Network;
-			sourceTree = "<group>";
-		};
-		GCODEC = {
-			isa = PBXGroup;
-			children = (F011, F012, F013);
-			path = Codec;
-			sourceTree = "<group>";
-		};
-		GAUDIO = {
-			isa = PBXGroup;
-			children = (F016, F017);
-			path = Audio;
-			sourceTree = "<group>";
-		};
-		GSESSION = {
-			isa = PBXGroup;
-			children = (F014, F015);
-			path = Session;
-			sourceTree = "<group>";
-		};
-		GUI = {
-			isa = PBXGroup;
-			children = (GTHEME, F023, F024, F025, F026, F027, F028, F018, F019);
-			path = UI;
-			sourceTree = "<group>";
-		};
-		GTHEME = {
-			isa = PBXGroup;
-			children = (F020, F021, F022);
+			children = (
+				F020 /* LiquidGlassModifier.swift */,
+				F021 /* Colors.swift */,
+				F022 /* Typography.swift */,
+			);
 			path = Theme;
+			sourceTree = "<group>";
+		};
+		GUI /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				GTHEME /* Theme */,
+				F023 /* DeviceListView.swift */,
+				F024 /* RemoteView.swift */,
+				F025 /* ShortcutKeyboardView.swift */,
+				F026 /* SettingsPanelView.swift */,
+				F027 /* FileTransferView.swift */,
+				F028 /* PermissionGuideView.swift */,
+				F018 /* TouchpadView.swift */,
+				F019 /* VideoTouchView.swift */,
+			);
+			path = UI;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		TTARGET = {
+		TTARGET /* LowRemote */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = BCLIST;
-			buildPhases = (BPSRC,);
-			buildRules = ();
-			dependencies = ();
+			buildConfigurationList = BCLIST /* Build configuration list for PBXNativeTarget "LowRemote" */;
+			buildPhases = (
+				BPSRC /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = LowRemote;
 			productName = LowRemote;
-			productReference = EAPP;
+			productReference = EAPP /* LowRemote.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		PROJ = {
+		PROJ /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
-				LastUpgradeCheck = 1500;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					TTARGET = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
 			};
-			buildConfigurationList = BCLISTPROJ;
+			buildConfigurationList = BCLISTPROJ /* Build configuration list for PBXProject "LowRemote" */;
 			compatibilityVersion = "Xcode 14.0";
-			developmentRegion = zh-Hans;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
-			knownRegions = (en, "zh-Hans", Base);
+			knownRegions = (
+				en,
+				"zh-Hans",
+				Base,
+			);
 			mainGroup = GROOT;
-			productRefGroup = GPROD;
+			productRefGroup = GPROD /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (TTARGET,);
+			targets = (
+				TTARGET /* LowRemote */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		BPSRC = {
+		BPSRC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A001, A002, A003, A004, A005, A006,
-				A007, A008, A009, A010, A011, A012,
-				A013, A014, A015, A016, A017, A018,
-				A019, A020, A021, A022, A023, A024,
-				A025, A026, A027, A028,
+				A001 /* LowRemoteApp.swift in Sources */,
+				A002 /* AppState.swift in Sources */,
+				A003 /* RemoteDevice.swift in Sources */,
+				A004 /* ControlEvent.swift in Sources */,
+				A005 /* Packet.swift in Sources */,
+				A006 /* MacKeyCodes.swift in Sources */,
+				A007 /* MdnsDiscovery.swift in Sources */,
+				A008 /* TcpClient.swift in Sources */,
+				A009 /* UdpReceiver.swift in Sources */,
+				A010 /* UdpSender.swift in Sources */,
+				A011 /* FrameAssembler.swift in Sources */,
+				A012 /* H265Decoder.swift in Sources */,
+				A013 /* VideoSurfaceView.swift in Sources */,
+				A014 /* RemoteSession.swift in Sources */,
+				A015 /* SavedHostsStore.swift in Sources */,
+				A016 /* AudioPlayer.swift in Sources */,
+				A017 /* AudioCapture.swift in Sources */,
+				A018 /* TouchpadView.swift in Sources */,
+				A019 /* VideoTouchView.swift in Sources */,
+				A020 /* LiquidGlassModifier.swift in Sources */,
+				A021 /* Colors.swift in Sources */,
+				A022 /* Typography.swift in Sources */,
+				A023 /* DeviceListView.swift in Sources */,
+				A024 /* RemoteView.swift in Sources */,
+				A025 /* ShortcutKeyboardView.swift in Sources */,
+				A026 /* SettingsPanelView.swift in Sources */,
+				A027 /* FileTransferView.swift in Sources */,
+				A028 /* PermissionGuideView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		BC_DEBUG = {
+		BCPROJ_DEBUG /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ANALYZER_NONNULL = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "LowRemote/LowRemote-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.lowremote.ios";
-				PRODUCT_NAME = LowRemote;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 			};
 			name = Debug;
 		};
-		BC_RELEASE = {
+		BCPROJ_RELEASE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ANALYZER_NONNULL = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "LowRemote/LowRemote-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.lowremote.ios";
-				PRODUCT_NAME = LowRemote;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
 		};
-		BCPROJ_DEBUG = {
+		BC_DEBUG /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "LowRemote/LowRemote-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowremote.ios;
+				PRODUCT_NAME = LowRemote;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
-		BCPROJ_RELEASE = {
+		BC_RELEASE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "LowRemote/LowRemote-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lowremote.ios;
+				PRODUCT_NAME = LowRemote;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		BCLIST = {
+		BCLIST /* Build configuration list for PBXNativeTarget "LowRemote" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = (BC_DEBUG, BC_RELEASE);
+			buildConfigurations = (
+				BC_DEBUG /* Debug */,
+				BC_RELEASE /* Release */,
+			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		BCLISTPROJ = {
+		BCLISTPROJ /* Build configuration list for PBXProject "LowRemote" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = (BCPROJ_DEBUG, BCPROJ_RELEASE);
+			buildConfigurations = (
+				BCPROJ_DEBUG /* Debug */,
+				BCPROJ_RELEASE /* Release */,
+			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
-	rootObject = PROJ;
+	rootObject = PROJ /* Project object */;
 }

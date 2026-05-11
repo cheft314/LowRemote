@@ -91,11 +91,11 @@ struct ShortcutKeyboardView: View {
             HStack(spacing: 8) {
                 Image(systemName: "keyboard")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.lrAccent)
+                    .foregroundStyle(Color.lrAccent)
 
                 TextField("输入文字发送到 Mac…", text: $inputText)
                     .font(.lrBody)
-                    .foregroundStyle(.lrTextPrimary)
+                    .foregroundStyle(Color.lrTextPrimary)
                     .focused($inputFocused)
                     .submitLabel(.send)
                     .onSubmit { sendText() }
@@ -106,7 +106,7 @@ struct ShortcutKeyboardView: View {
                     Button { inputText = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 14))
-                            .foregroundStyle(.lrTextTertiary)
+                            .foregroundStyle(Color.lrTextTertiary)
                     }
                 }
             }

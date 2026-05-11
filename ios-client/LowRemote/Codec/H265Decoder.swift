@@ -177,6 +177,13 @@ final class H265Decoder {
         ]
 
         var s: VTDecompressionSession?
+
+        // 模拟器没有 HEVC 硬件解码器，强制请求硬件会阻塞/卡死，加以提示后直接返回
+        #if targetEnvironment(simulator)
+        NSLog("[H265Decoder] ⚠️ 运行在模拟器，H.265 硬件解码不可用，请在真机上测试视频流功能")
+        return
+        #else
+        // Session must use nil outputCallback when using closure-based VTDecompressionSessionDecodeFrame.
         let st = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: newDesc,
@@ -196,6 +203,7 @@ final class H265Decoder {
         } else {
             NSLog("[H265Decoder] VTDecompressionSessionCreate failed: \(st)")
         }
+        #endif
     }
 
     // MARK: - HVCC conversion

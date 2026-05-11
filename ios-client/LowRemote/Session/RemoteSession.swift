@@ -97,11 +97,9 @@ final class RemoteSession {
         defer { decoderLock.unlock() }
         videoView = view
         guard let v = view else { return }
-        // 更新已运行解码器的输出目标（解决 onAppear 时 view 为 nil 的竞态）
+        // 更新已运行解码器的渲染目标
         if let dec = decoder {
-            dec.onDecodedFrame = { [weak v] pixelBuffer in
-                v?.enqueue(pixelBuffer)
-            }
+            dec.displayLayer = v.displayLayer
             return
         }
         // 解码器尚未启动：若已连接则立即启动（补偿 RESOLUTION/OK 到达时 view 还未注入的竞态）
@@ -350,9 +348,7 @@ final class RemoteSession {
         guard decoder == nil else { return }
         let size = remoteResolution ?? CGSize(width: 1920, height: 1080)
         let dec  = H265Decoder(fps: fps)
-        dec.onDecodedFrame = { [weak view] pixelBuffer in
-            view?.enqueue(pixelBuffer)
-        }
+        dec.displayLayer = view.displayLayer   // 直接绑定到 AVSampleBufferDisplayLayer
         dec.start()
         decoder = dec
         NSLog("[Session] 解码器启动 \(Int(size.width))x\(Int(size.height)) @ \(fps)fps")

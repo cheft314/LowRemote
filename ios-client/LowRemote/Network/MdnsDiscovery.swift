@@ -83,11 +83,10 @@ final class MdnsDiscovery {
                     var udpPort: UInt16 = 8891
 
                     // 解析 TXT Record
-                    if case .service(_, _, _, let txt) = result.endpoint,
-                       let record = txt {
-                        let dict = NWTXTRecord(record)
-                        if let v = dict["tcp_port"], case .string(let s) = v, let p = UInt16(s) { tcpPort = p }
-                        if let v = dict["udp_port"], case .string(let s) = v, let p = UInt16(s) { udpPort = p }
+                    // NWBrowser result 的 metadata 里直接携带 NWTXTRecord，无需再包装
+                    if case .bonjour(let txtRecord) = result.metadata {
+                        if let s = txtRecord.getEntry(for: "tcp_port"), let p = UInt16(s) { tcpPort = p }
+                        if let s = txtRecord.getEntry(for: "udp_port"), let p = UInt16(s) { udpPort = p }
                     }
 
                     let device = RemoteDevice(
@@ -115,13 +114,3 @@ final class MdnsDiscovery {
     }
 }
 
-// MARK: - NWTXTRecord subscript helper
-private extension NWTXTRecord {
-    subscript(_ key: String) -> NWTXTRecord.Entry? {
-        var result: NWTXTRecord.Entry? = nil
-        self.apply { k, entry, _ in
-            if k == key { result = entry }
-        }
-        return result
-    }
-}

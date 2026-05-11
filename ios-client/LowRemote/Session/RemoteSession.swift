@@ -142,7 +142,15 @@ final class RemoteSession {
     func changeFps(_ newFps: Int) {
         fps = newFps
         guard state == .connected else { return }
-        decoderLock.lock(); decoder?.flush(); decoderLock.unlock()
+        // flush 在后台执行避免主线程阻塞
+        decoderLock.lock()
+        let dec = decoder
+        decoderLock.unlock()
+        if let dec = dec {
+            DispatchQueue.global(qos: .userInitiated).async {
+                dec.flush()
+            }
+        }
         assembler.reset()
         tcp.send("FPS:\(newFps)")
     }
@@ -150,7 +158,21 @@ final class RemoteSession {
     func switchScreen(_ index: Int) {
         guard state == .connected else { return }
         currentScreen = index
-        decoderLock.lock(); decoder?.stop(); decoder = nil; decoderLock.unlock()
+
+        // 取出旧解码器并置空（在锁内操作引用，锁外执行 stop 避免死锁）
+        decoderLock.lock()
+        let oldDecoder = decoder
+        decoder = nil
+        decoderLock.unlock()
+
+        // stop() 内部会 Invalidate VT session，可能阻塞等待回调完成
+        // 在后台线程执行防止主线程卡死
+        if let old = oldDecoder {
+            DispatchQueue.global(qos: .userInitiated).async {
+                old.stop()
+            }
+        }
+
         assembler.reset()
         tcp.send("SCREEN:\(index)")
     }
@@ -332,8 +354,13 @@ final class RemoteSession {
         receiver.stop()
 
         decoderLock.lock()
-        decoder?.stop(); decoder = nil
+        let oldDecoder = decoder
+        decoder = nil
         decoderLock.unlock()
+        // stop 在后台避免主线程死锁
+        if let old = oldDecoder {
+            DispatchQueue.global(qos: .userInitiated).async { old.stop() }
+        }
 
         videoView?.flush()
         assembler.reset()

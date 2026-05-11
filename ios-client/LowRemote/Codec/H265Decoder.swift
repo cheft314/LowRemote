@@ -7,8 +7,10 @@ import CoreVideo
 ///
 /// 设计对齐 Android H265Decoder.kt：
 /// - 等待首个含 VPS/SPS/PPS 的 IDR 帧初始化 session
-/// - Annex-B 输入（00 00 00 01 起始码）
+/// - Annex-B 输入（00 00 00 01 起始码）→ 内部转换为 HVCC length-prefixed 格式
 /// - 输出 CVPixelBuffer 供 VideoSurfaceView 渲染
+///
+/// ⚠️ VideoToolbox 不接受 Annex-B start codes！必须转为 4-byte big-endian length prefix。
 final class H265Decoder {
 
     // MARK: - Public interface
@@ -40,21 +42,28 @@ final class H265Decoder {
 
     func stop() {
         sessionLock.lock()
-        if let s = session {
-            VTDecompressionSessionWaitForAsynchronousFrames(s)
-            VTDecompressionSessionInvalidate(s)
-        }
-        session     = nil
-        formatDesc  = nil
-        started     = false
+        let s = session
+        session = nil
+        formatDesc = nil
+        started = false
         csdReceived = false
         sessionLock.unlock()
+
+        // Invalidate outside the lock to avoid deadlock with VT callback thread
+        if let s = s {
+            VTDecompressionSessionInvalidate(s)
+        }
     }
 
     func flush() {
         sessionLock.lock()
-        if let s = session { VTDecompressionSessionWaitForAsynchronousFrames(s) }
+        let s = session
         sessionLock.unlock()
+
+        // WaitForAsynchronousFrames outside the lock to prevent deadlock
+        if let s = s {
+            VTDecompressionSessionWaitForAsynchronousFrames(s)
+        }
         csdReceived = false
     }
 
@@ -70,7 +79,7 @@ final class H265Decoder {
             csdReceived = true
         }
 
-        // 解析并分离 NAL units
+        // 解析并分离 NAL units（不含 start codes）
         let nals = splitAnnexB(data)
         if nals.isEmpty { return }
 
@@ -87,10 +96,23 @@ final class H265Decoder {
             }
         }
 
-        guard let s = session, let fd = formatDesc else { return }
+        sessionLock.lock()
+        guard let s = session, let fd = formatDesc else {
+            sessionLock.unlock()
+            return
+        }
+        sessionLock.unlock()
 
-        // 将 Annex-B 数据转换为 AVCC CMBlockBuffer，送入解码器
-        guard let blockBuf = annexBToBlockBuffer(data) else { return }
+        // 过滤掉参数集 NAL（VPS/SPS/PPS），只保留 VCL slice NAL units 送入解码器
+        let vcls = nals.filter { nal in
+            guard !nal.isEmpty else { return false }
+            let nalType = (nal[0] >> 1) & 0x3F
+            return nalType < 32  // 0-31 = VCL NAL units
+        }
+        guard !vcls.isEmpty else { return }
+
+        // 将 NAL units 转换为 HVCC 格式（4-byte big-endian length prefix）并组合为 CMBlockBuffer
+        guard let blockBuf = nalsToHVCCBlockBuffer(vcls) else { return }
 
         ptsCounter += 1
         var timing = CMSampleTimingInfo(
@@ -99,8 +121,10 @@ final class H265Decoder {
             decodeTimeStamp:        .invalid
         )
 
+        let totalSize = vcls.reduce(0) { $0 + 4 + $1.count }
+        var sampleSize = totalSize
+
         var sampleBuf: CMSampleBuffer?
-        var size = data.count
         let status = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
             dataBuffer: blockBuf,
@@ -109,25 +133,39 @@ final class H265Decoder {
             sampleTimingEntryCount: 1,
             sampleTimingArray: &timing,
             sampleSizeEntryCount: 1,
-            sampleSizeArray: &size,
+            sampleSizeArray: &sampleSize,
             sampleBufferOut: &sampleBuf
         )
-        guard status == noErr, let sb = sampleBuf else { return }
+        guard status == noErr, let sb = sampleBuf else {
+            NSLog("[H265Decoder] CMSampleBufferCreateReady failed: \(status)")
+            return
+        }
 
-        let flags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression, ._EnableTemporalProcessing]
-        _ = VTDecompressionSessionDecodeFrame(s, sampleBuffer: sb, flags: flags, infoFlagsOut: nil) { [weak self] status, _, imageBuffer, _, _, _ in
-            guard let self else { return }
-            guard status == noErr, let imageBuffer else { return }
+        let flags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
+        var infoFlags = VTDecodeInfoFlags()
+        let decodeStatus = VTDecompressionSessionDecodeFrame(
+            s, sampleBuffer: sb, flags: flags, infoFlagsOut: &infoFlags
+        ) { [weak self] status, _, imageBuffer, _, _, _ in
+            guard let self = self else { return }
+            guard status == noErr, let imageBuffer = imageBuffer else {
+                if status != noErr {
+                    NSLog("[H265Decoder] decode callback error: \(status)")
+                }
+                return
+            }
             self.onDecodedFrame?(imageBuffer)
+        }
+
+        if decodeStatus != noErr {
+            NSLog("[H265Decoder] VTDecompressionSessionDecodeFrame failed: \(decodeStatus)")
         }
     }
 
     // MARK: - Session management
 
     private func rebuildSession(formatDesc newDesc: CMVideoFormatDescription) {
-        // 停旧的
+        // 停旧的（在锁内但不做 WaitForAsync，直接 Invalidate 避免死锁）
         if let old = session {
-            VTDecompressionSessionWaitForAsynchronousFrames(old)
             VTDecompressionSessionInvalidate(old)
             session = nil
         }
@@ -139,7 +177,6 @@ final class H265Decoder {
         ]
 
         var s: VTDecompressionSession?
-        // Session must use nil outputCallback when using closure-based VTDecompressionSessionDecodeFrame.
         let st = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: newDesc,
@@ -149,15 +186,65 @@ final class H265Decoder {
             decompressionSessionOut: &s
         )
         if st == noErr, let s = s {
-            // 低延迟
+            // 低延迟：实时解码
             VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
             session = s
+            ptsCounter = 0
             NSLog("[H265Decoder] session created %dx%d",
                   CMVideoFormatDescriptionGetDimensions(newDesc).width,
                   CMVideoFormatDescriptionGetDimensions(newDesc).height)
         } else {
             NSLog("[H265Decoder] VTDecompressionSessionCreate failed: \(st)")
         }
+    }
+
+    // MARK: - HVCC conversion
+
+    /// 将多个 NAL units（不含 start code）转换为 HVCC 格式的 CMBlockBuffer
+    /// 每个 NAL 前面加 4 字节大端长度前缀
+    private func nalsToHVCCBlockBuffer(_ nals: [Data]) -> CMBlockBuffer? {
+        // 计算总大小
+        let totalSize = nals.reduce(0) { $0 + 4 + $1.count }
+
+        // 构建连续内存：[4-byte length][NAL body][4-byte length][NAL body]...
+        var hvccData = Data(capacity: totalSize)
+        for nal in nals {
+            // 4-byte big-endian length
+            var length = UInt32(nal.count).bigEndian
+            hvccData.append(Data(bytes: &length, count: 4))
+            hvccData.append(nal)
+        }
+
+        // 创建 CMBlockBuffer（必须拷贝数据，因为 hvccData 是栈变量）
+        var blockBuf: CMBlockBuffer?
+        let status = hvccData.withUnsafeBytes { rawBuf in
+            var bb: CMBlockBuffer?
+            let st = CMBlockBufferCreateWithMemoryBlock(
+                allocator: kCFAllocatorDefault,
+                memoryBlock: nil,           // let CM allocate
+                blockLength: totalSize,
+                blockAllocator: kCFAllocatorDefault,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: totalSize,
+                flags: 0,
+                blockBufferOut: &bb
+            )
+            guard st == noErr, let buf = bb else { return st }
+
+            // Copy data into the block buffer
+            let copyStatus = CMBlockBufferReplaceDataBytes(
+                with: rawBuf.baseAddress!,
+                blockBuffer: buf,
+                offsetIntoDestination: 0,
+                dataLength: totalSize
+            )
+            if copyStatus == noErr {
+                blockBuf = buf
+            }
+            return copyStatus
+        }
+        return status == noErr ? blockBuf : nil
     }
 
     // MARK: - Annex-B helpers
@@ -203,25 +290,6 @@ final class H265Decoder {
                 }
             }
         }
-    }
-
-    /// Annex-B → CMBlockBuffer（保留 start codes，VT 需要）
-    private func annexBToBlockBuffer(_ data: Data) -> CMBlockBuffer? {
-        var blockBuf: CMBlockBuffer?
-        let status = data.withUnsafeBytes { rawBuf in
-            CMBlockBufferCreateWithMemoryBlock(
-                allocator: kCFAllocatorDefault,
-                memoryBlock: UnsafeMutableRawPointer(mutating: rawBuf.baseAddress!),
-                blockLength: data.count,
-                blockAllocator: kCFAllocatorNull,
-                customBlockSource: nil,
-                offsetToData: 0,
-                dataLength: data.count,
-                flags: 0,
-                blockBufferOut: &blockBuf
-            )
-        }
-        return status == noErr ? blockBuf : nil
     }
 
     /// 按 00 00 00 01 或 00 00 01 分割 Annex-B，返回不含 start code 的 NAL 列表

@@ -46,6 +46,8 @@ import kotlin.math.hypot
 class TouchpadView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
+    /** true = landscape mode → 16:10 ratio; false = portrait → 16:9 ratio */
+    val isLandscape: Boolean = false,
 ) : View(context, attrs) {
 
     companion object {
@@ -93,33 +95,64 @@ class TouchpadView @JvmOverloads constructor(
 
     // ── Drawing ───────────────────────────────────────────────────────────────
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(50, 255, 255, 255); style = Paint.Style.STROKE
-        strokeWidth = 1f * dp
+        style = Paint.Style.STROKE
+        // strokeWidth set in onSizeChanged once dp is available
     }
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(30, 255, 255, 255); textSize = 9.5f * dp
+        color = Color.argb(45, 255, 255, 255)
         textAlign = Paint.Align.CENTER
+        // textSize set in onSizeChanged
     }
     private val dragPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(80, 74, 144, 226); style = Paint.Style.FILL
+        color = Color.argb(60, 79, 142, 247)
+        style = Paint.Style.FILL
+    }
+    // Gradient shader updated in onSizeChanged
+    private var borderShader: android.graphics.LinearGradient? = null
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        borderPaint.strokeWidth = 1.5f * dp
+        hintPaint.textSize      = 10f  * dp
+        // Diagonal gradient border: Accent (#4F8EF7) → Purple (#8B6FE8)
+        borderShader = android.graphics.LinearGradient(
+            0f, 0f, w.toFloat(), h.toFloat(),
+            intArrayOf(0xFF4F8EF7.toInt(), 0xFF8B6FE8.toInt()),
+            null,
+            android.graphics.Shader.TileMode.CLAMP,
+        )
+        borderPaint.shader = borderShader
     }
 
     override fun onMeasure(w: Int, h: Int) {
         val pw = MeasureSpec.getSize(w).coerceAtLeast(1)
-        setMeasuredDimension(pw, pw * 10 / 16)
+        // Portrait → 16:9  |  Landscape → 16:10 (shorter)
+        val measuredH = if (isLandscape) pw * 10 / 16 else pw * 9 / 16
+        setMeasuredDimension(pw, measuredH)
     }
 
     override fun onDraw(canvas: Canvas) {
-        val ins = 3f * dp
-        canvas.drawRoundRect(ins, ins, width - ins, height - ins, 6f * dp, 6f * dp, borderPaint)
+        val ins = 2f * dp
+        val r   = 8f * dp
+
+        // Background fill
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 13, 14, 20)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bgPaint)
+
+        // Drag active: tinted fill
         if (dragActive) {
-            canvas.drawRoundRect(ins, ins, width - ins, height - ins, 6f * dp, 6f * dp, dragPaint)
+            canvas.drawRoundRect(ins, ins, width - ins, height - ins, r, r, dragPaint)
         }
-        val hint = buildString {
-            append("触控板")
-            if (dragActive) append("  🔒拖拽中")
-            else append("  · 双指滚动 · 三指手势")
-        }
+
+        // Gradient border
+        canvas.drawRoundRect(ins, ins, width - ins, height - ins, r - ins, r - ins, borderPaint)
+
+        // Hint text
+        val hint = if (dragActive) "🔒  拖拽中"
+                   else "触控板  ·  双指滚动  ·  三指手势"
         canvas.drawText(hint, width / 2f, height / 2f + hintPaint.textSize / 3f, hintPaint)
     }
 

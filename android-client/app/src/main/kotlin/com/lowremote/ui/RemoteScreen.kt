@@ -2,55 +2,44 @@ package com.lowremote.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.text.InputType
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.lowremote.model.ControlEvent
 import com.lowremote.session.RemoteSession
+import com.lowremote.session.SavedHostsStore
+import com.lowremote.ui.theme.*
+import kotlinx.coroutines.launch
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REMOTE SCREEN
+// REMOTE SCREEN  —  竖屏三段式 / 横屏左右式  双布局
 // ═══════════════════════════════════════════════════════════════════════════
-/**
- * 主控制界面 — 全屏零 Header。
- *
- * 布局：左侧视频区（height × 1.6），右侧控制区（剩余宽度）。
- * 按返回键：向右滑入抽屉（占屏幕约 50% 宽），再按返回收回抽屉。
- *
- * 抽屉布局：
- *   • 顶部置顶：当前分辨率 + 断开按钮
- *   • 可滚动设置区：屏幕切换 / 帧率 / 视频模式 / 布局 / 音频 / 文字输入 / 拖拽锁
- */
 @Composable
 fun RemoteScreen(
     session: RemoteSession,
@@ -63,175 +52,377 @@ fun RemoteScreen(
     val curScreen   by session.currentScreen.collectAsState()
     val audioOn     by session.audioEnabled.collectAsState()
 
-    // ── Persistent prefs ──────────────────────────────────────────────────────
+    // ── Persisted settings ────────────────────────────────────────────────
+    val context  = LocalContext.current
+    val store    = remember { SavedHostsStore(context) }
+    val settings by store.settings.collectAsState(initial = SavedHostsStore.AppSettings())
+    val scope    = rememberCoroutineScope()
+
     var drawerOpen       by remember { mutableStateOf(false) }
-    var mirrorLayout     by remember { mutableStateOf(false) }   // swap L↔R
     var videoTouchscreen by remember { mutableStateOf(true) }
     var dragLockEnabled  by remember { mutableStateOf(false) }
+    val videoViewRef     = remember { mutableStateOf<VideoTouchView?>(null) }
 
-    // Back key: open drawer if closed, close if open
-    BackHandler(enabled = true) {
-        if (drawerOpen) drawerOpen = false else drawerOpen = true
+    // ── Lock-orientation effect ───────────────────────────────────────────
+    val activity = context as? ComponentActivity
+    DisposableEffect(settings.lockPortrait) {
+        activity?.requestedOrientation = if (settings.lockPortrait)
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        else
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        onDispose {
+            // Restore on leave
+            activity?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        }
     }
 
-    // ── Permission launcher for mic ────────────────────────────────────────────
-    val ctx = LocalContext.current
+    // ── Back handler ──────────────────────────────────────────────────────
+    BackHandler(enabled = true) {
+        drawerOpen = !drawerOpen
+    }
+
+    // ── Mic permission ────────────────────────────────────────────────────
     val audioPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) session.setAudioEnabled(true) }
 
-    // ── Layout ────────────────────────────────────────────────────────────────
-    val density   = LocalDensity.current
-    val layoutDir = if (mirrorLayout) LayoutDirection.Rtl else LayoutDirection.Ltr
-    val videoViewRef = remember { mutableStateOf<VideoTouchView?>(null) }
+    fun toggleAudio(on: Boolean) {
+        if (on) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) session.setAudioEnabled(true)
+            else audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else session.setAudioEnabled(false)
+    }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black),
-    ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val screenHDp = with(density) { constraints.maxHeight.toDp() }
-            val screenWDp = with(density) { constraints.maxWidth.toDp() }
+    // ── Detect orientation ────────────────────────────────────────────────
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
 
-            // Compute video width from the actual remote screen's aspect ratio.
-            // Falls back to 16:10 until the first RESOLUTION message arrives.
-            val (remW, remH) = resolution ?: Pair(16, 10)
-            val ratio        = remW.toFloat() / remH.toFloat()
-            // Video fills full screen height; width = height × ratio, clamped so
-            // the right panel is at least 80 dp wide.
-            val minRightDp   = 80.dp
-            val maxVideoWDp  = screenWDp - minRightDp
-            val videoWDp     = (screenHDp * ratio).coerceAtMost(maxVideoWDp)
-            val rightWDp     = screenWDp - videoWDp
-
-            CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // ── Video ─────────────────────────────────────────────────
-                    Box(
-                        modifier = Modifier.fillMaxHeight().width(videoWDp).background(Color.Black),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AndroidView(
-                            factory = { c ->
-                                VideoTouchView(c).also { v ->
-                                    videoViewRef.value = v
-                                    v.touchscreenMode  = videoTouchscreen
-                                    v.dragLockEnabled  = dragLockEnabled
-                                    resolution?.let { (w, h) ->
-                                        v.targetAspectWidth  = w
-                                        v.targetAspectHeight = h
-                                    }
-                                    v.onSurfaceReady    = { s -> session.setSurface(s) }
-                                    v.onSurfaceDestroyed = { session.setSurface(null) }
-                                    v.onEvent = { ev -> session.sendEvent(ev) }
-                                    v.onFirstTouch = { drawerOpen = false }
-                                }
-                            },
-                            update = { v ->
-                                v.touchscreenMode = videoTouchscreen
-                                v.dragLockEnabled  = dragLockEnabled
-                                resolution?.let { (w, h) ->
-                                    if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
-                                        v.targetAspectWidth  = w
-                                        v.targetAspectHeight = h
-                                        v.requestLayout()
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-
-                    // ── Right control panel ───────────────────────────────────
-                    Column(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(rightWDp)
-                            .background(Color(0xFF111111)),
-                    ) {
-                        ShortcutKeyboard(
-                            modifier      = Modifier.fillMaxWidth().weight(1f),
-                            onEvent       = { ev -> session.sendEvent(ev) },
-                            dragLockOn    = dragLockEnabled,
-                            onDragLock    = { dragLockEnabled = it },
-                            audioOn       = audioOn,
-                            onAudio       = { on ->
-                                if (on) {
-                                    if (ContextCompat.checkSelfPermission(ctx,
-                                            Manifest.permission.RECORD_AUDIO) ==
-                                        PackageManager.PERMISSION_GRANTED) {
-                                        session.setAudioEnabled(true)
-                                    } else {
-                                        audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                    }
-                                } else {
-                                    session.setAudioEnabled(false)
-                                }
-                            },
-                            onSendText    = { text -> session.sendEvent(ControlEvent.TypeText(text)) },
-                            onSendFiles   = { uris -> session.sendFiles(uris, ctx) },
-                        )
-                        AndroidView(
-                            factory = { c ->
-                                TouchpadView(c).apply {
-                                    setBackgroundColor(0xFF1A1A1A.toInt())
-                                    this.dragLockEnabled = dragLockEnabled
-                                    onEvent = { ev: ControlEvent -> session.sendEvent(ev) }
-                                }
-                            },
-                            update = { v -> v.dragLockEnabled = dragLockEnabled },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Right-side sliding drawer ─────────────────────────────────────────
-        // No scrim — the drawer slides in without a background overlay so the
-        // video/control area behind it stays fully visible and touchable.
-        AnimatedVisibility(
-            visible  = drawerOpen,
-            enter    = slideInHorizontally(tween(260)) { it },
-            exit     = slideOutHorizontally(tween(220)) { it },
-            modifier = Modifier.align(Alignment.CenterEnd),
+    AppTheme {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Background),
         ) {
-            SessionDrawer(
-                fps              = fps,
-                state            = state,
-                resolution       = resolution,
-                screens          = screens,
-                curScreen        = curScreen,
-                mirrorLayout     = mirrorLayout,
-                videoTouchscreen = videoTouchscreen,
-                dragLockEnabled  = dragLockEnabled,
-                audioOn          = audioOn,
-                onChangeFps      = { session.changeFps(it) },
-                onSwitchScreen   = { session.switchScreen(it) },
-                onToggleMirror   = { mirrorLayout     = it },
-                onToggleVideoMode = { videoTouchscreen = it },
-                onToggleDragLock = { dragLockEnabled  = it },
-                onToggleAudio    = { on ->
-                    if (on) {
-                        if (ContextCompat.checkSelfPermission(ctx,
-                                Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-                            session.setAudioEnabled(true)
-                        else
-                            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    } else {
-                        session.setAudioEnabled(false)
-                    }
-                },
-                onDisconnect = { drawerOpen = false; onDisconnect() },
-                onClose      = { drawerOpen = false },
-            )
+            if (isLandscape) {
+                // ── LANDSCAPE: left video + right panel ───────────────────
+                LandscapeLayout(
+                    session          = session,
+                    resolution       = resolution,
+                    videoTouchscreen = videoTouchscreen,
+                    dragLockEnabled  = dragLockEnabled,
+                    audioOn          = audioOn,
+                    videoViewRef     = videoViewRef,
+                    onDrawerOpen     = { drawerOpen = true },
+                    onEvent          = { session.sendEvent(it) },
+                    onDragLock       = { dragLockEnabled = it },
+                    onAudio          = ::toggleAudio,
+                    onSendText       = { session.sendEvent(ControlEvent.TypeText(it)) },
+                    onSendFiles      = { uris -> session.sendFiles(uris, context) },
+                )
+            } else {
+                // ── PORTRAIT: top-mid-bottom 3-section ────────────────────
+                PortraitLayout(
+                    session          = session,
+                    resolution       = resolution,
+                    videoTouchscreen = videoTouchscreen,
+                    dragLockEnabled  = dragLockEnabled,
+                    audioOn          = audioOn,
+                    videoViewRef     = videoViewRef,
+                    onDrawerOpen     = { drawerOpen = true },
+                    onEvent          = { session.sendEvent(it) },
+                    onDragLock       = { dragLockEnabled = it },
+                    onAudio          = ::toggleAudio,
+                    onSendText       = { session.sendEvent(ControlEvent.TypeText(it)) },
+                    onSendFiles      = { uris -> session.sendFiles(uris, context) },
+                )
+            }
+
+            // ── Settings drawer (slides from right) ───────────────────────
+            AnimatedVisibility(
+                visible  = drawerOpen,
+                enter    = slideInHorizontally(tween(260)) { it },
+                exit     = slideOutHorizontally(tween(220)) { it },
+                modifier = Modifier.align(Alignment.CenterEnd),
+            ) {
+                SessionDrawer(
+                    fps              = fps,
+                    state            = state,
+                    resolution       = resolution,
+                    screens          = screens,
+                    curScreen        = curScreen,
+                    audioOn          = audioOn,
+                    videoTouchscreen = videoTouchscreen,
+                    dragLockEnabled  = dragLockEnabled,
+                    lockPortrait     = settings.lockPortrait,
+                    onChangeFps      = { session.changeFps(it) },
+                    onSwitchScreen   = { session.switchScreen(it) },
+                    onToggleVideoMode = { videoTouchscreen = it },
+                    onToggleDragLock = { dragLockEnabled = it },
+                    onToggleAudio    = ::toggleAudio,
+                    onToggleLockPortrait = { lock ->
+                        scope.launch { store.updateSettings { s -> s.copy(lockPortrait = lock) } }
+                    },
+                    onDisconnect     = { drawerOpen = false; onDisconnect() },
+                    onClose          = { drawerOpen = false },
+                )
+            }
+
+            // Tap-outside to close drawer
+            if (drawerOpen) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        ) { drawerOpen = false }
+                )
+            }
         }
     }
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════
-// SESSION DRAWER  (slides in from the right, takes ~50% screen width)
+// PORTRAIT LAYOUT  —  上(视频) 中(快捷键) 下(触控板)
+// ═══════════════════════════════════════════════════════════════════════════
+@Composable
+private fun PortraitLayout(
+    session: RemoteSession,
+    resolution: Pair<Int, Int>?,
+    videoTouchscreen: Boolean,
+    dragLockEnabled: Boolean,
+    audioOn: Boolean,
+    videoViewRef: MutableState<VideoTouchView?>,
+    onDrawerOpen: () -> Unit,
+    onEvent: (ControlEvent) -> Unit,
+    onDragLock: (Boolean) -> Unit,
+    onAudio: (Boolean) -> Unit,
+    onSendText: (String) -> Unit,
+    onSendFiles: (List<android.net.Uri>) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+
+        // ── TOP: Video area — width=full, height=width * aspect ────────────
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.Black),
+        ) {
+            val viewW = constraints.maxWidth
+            val (remW, remH) = resolution ?: Pair(16, 10)
+            val aspectH = (viewW * remH / remW.toFloat()).toInt()
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(with(LocalDensity.current) { aspectH.toDp() }),
+                contentAlignment = Alignment.Center,
+            ) {
+                AndroidView(
+                    factory = { c ->
+                        VideoTouchView(c).also { v ->
+                            videoViewRef.value = v
+                            v.touchscreenMode   = videoTouchscreen
+                            v.dragLockEnabled   = dragLockEnabled
+                            resolution?.let { (w, h) ->
+                                v.targetAspectWidth  = w
+                                v.targetAspectHeight = h
+                            }
+                            v.onSurfaceReady     = { s -> session.setSurface(s) }
+                            v.onSurfaceDestroyed = { session.setSurface(null) }
+                            v.onEvent            = { ev -> onEvent(ev) }
+                        }
+                    },
+                    update = { v ->
+                        v.touchscreenMode = videoTouchscreen
+                        v.dragLockEnabled = dragLockEnabled
+                        resolution?.let { (w, h) ->
+                            if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
+                                v.targetAspectWidth  = w
+                                v.targetAspectHeight = h
+                                v.requestLayout()
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                // Settings button overlay (top-right corner of video)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .clickable(onClick = onDrawerOpen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Settings,
+                        contentDescription = "设置",
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+
+        // ── MIDDLE: Shortcut keyboard — fills remaining space above touchpad
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            ShortcutKeyboard(
+                modifier    = Modifier.fillMaxSize(),
+                onEvent     = onEvent,
+                dragLockOn  = dragLockEnabled,
+                onDragLock  = onDragLock,
+                audioOn     = audioOn,
+                onAudio     = onAudio,
+                onSendText  = onSendText,
+                onSendFiles = onSendFiles,
+            )
+        }
+
+        // ── BOTTOM: Touchpad — fixed 16:9 portrait ratio ───────────────────
+        AndroidView(
+            factory = { c ->
+                TouchpadView(c).also { v ->
+                    v.dragLockEnabled = dragLockEnabled
+                    v.onEvent = { ev -> onEvent(ev) }
+                }
+            },
+            update  = { v -> v.dragLockEnabled = dragLockEnabled },
+            // fillMaxWidth + wrapContentHeight lets onMeasure(16:9) do its job
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LANDSCAPE LAYOUT  —  left video + right panel
+// ═══════════════════════════════════════════════════════════════════════════
+@Composable
+private fun LandscapeLayout(
+    session: RemoteSession,
+    resolution: Pair<Int, Int>?,
+    videoTouchscreen: Boolean,
+    dragLockEnabled: Boolean,
+    audioOn: Boolean,
+    videoViewRef: MutableState<VideoTouchView?>,
+    onDrawerOpen: () -> Unit,
+    onEvent: (ControlEvent) -> Unit,
+    onDragLock: (Boolean) -> Unit,
+    onAudio: (Boolean) -> Unit,
+    onSendText: (String) -> Unit,
+    onSendFiles: (List<android.net.Uri>) -> Unit,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density    = LocalDensity.current
+        val screenH    = with(density) { constraints.maxHeight.toDp() }
+        val screenW    = with(density) { constraints.maxWidth.toDp() }
+        val (remW, remH) = resolution ?: Pair(16, 10)
+        val ratio      = remW.toFloat() / remH.toFloat()
+        val minRightDp = 100.dp
+        val videoWDp   = (screenH * ratio).coerceAtMost(screenW - minRightDp)
+        val rightWDp   = screenW - videoWDp
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Video panel
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(videoWDp)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                AndroidView(
+                    factory = { c ->
+                        VideoTouchView(c).also { v ->
+                            videoViewRef.value = v
+                            v.touchscreenMode   = videoTouchscreen
+                            v.dragLockEnabled   = dragLockEnabled
+                            resolution?.let { (w, h) ->
+                                v.targetAspectWidth  = w
+                                v.targetAspectHeight = h
+                            }
+                            v.onSurfaceReady     = { s -> session.setSurface(s) }
+                            v.onSurfaceDestroyed = { session.setSurface(null) }
+                            v.onEvent            = { ev -> onEvent(ev) }
+                        }
+                    },
+                    update = { v ->
+                        v.touchscreenMode = videoTouchscreen
+                        v.dragLockEnabled = dragLockEnabled
+                        resolution?.let { (w, h) ->
+                            if (v.targetAspectWidth != w || v.targetAspectHeight != h) {
+                                v.targetAspectWidth  = w
+                                v.targetAspectHeight = h
+                                v.requestLayout()
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .clickable(onClick = onDrawerOpen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Settings,
+                        contentDescription = "设置",
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
+            // Right control panel — keyboard on top, touchpad on bottom
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(rightWDp)
+                    .background(Background),
+            ) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    ShortcutKeyboard(
+                        modifier    = Modifier.fillMaxSize(),
+                        onEvent     = onEvent,
+                        dragLockOn  = dragLockEnabled,
+                        onDragLock  = onDragLock,
+                        audioOn     = audioOn,
+                        onAudio     = onAudio,
+                        onSendText  = onSendText,
+                        onSendFiles = onSendFiles,
+                    )
+                }
+                // Landscape touchpad: 16:10
+                AndroidView(
+                    factory = { c ->
+                        TouchpadView(c, isLandscape = true).also { v ->
+                            v.dragLockEnabled = dragLockEnabled
+                            v.onEvent = { ev -> onEvent(ev) }
+                        }
+                    },
+                    update  = { v -> v.dragLockEnabled = dragLockEnabled },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SESSION DRAWER
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun SessionDrawer(
@@ -240,54 +431,109 @@ private fun SessionDrawer(
     resolution: Pair<Int, Int>?,
     screens: List<RemoteSession.ScreenInfo>,
     curScreen: Int,
-    mirrorLayout: Boolean,
+    audioOn: Boolean,
     videoTouchscreen: Boolean,
     dragLockEnabled: Boolean,
-    audioOn: Boolean,
+    lockPortrait: Boolean,
     onChangeFps: (Int) -> Unit,
     onSwitchScreen: (Int) -> Unit,
-    onToggleMirror: (Boolean) -> Unit,
     onToggleVideoMode: (Boolean) -> Unit,
     onToggleDragLock: (Boolean) -> Unit,
     onToggleAudio: (Boolean) -> Unit,
+    onToggleLockPortrait: (Boolean) -> Unit,
     onDisconnect: () -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxHeight()
-            .fillMaxWidth(0.5f)
-            .background(Color(0xF0141414))
-            // Always use LTR inside the drawer regardless of mirror setting
-            .then(Modifier),
+            .fillMaxWidth(0.78f)
+            .background(SurfaceL1)
+            .border(
+                width = 1.dp,
+                color = BorderDefault,
+                shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp),
+            ),
     ) {
-        // ── PINNED TOP: status + disconnect ───────────────────────────────────
-        DrawerTopBar(
-            state      = state,
-            resolution = resolution,
-            onDisconnect = onDisconnect,
-        )
+        // ── Top bar ───────────────────────────────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceL2)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val isConnected = state == RemoteSession.State.Connected
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (isConnected) OnlineGreen else TextTertiary),
+                    )
+                    Text(
+                        text  = if (isConnected) "已连接" else "连接中…",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isConnected) OnlineGreen else TextTertiary,
+                    )
+                }
+                resolution?.let { (w, h) ->
+                    Text(
+                        text  = "${w} × ${h}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextTertiary,
+                    )
+                }
+            }
+            Button(
+                onClick = onDisconnect,
+                colors  = ButtonDefaults.buttonColors(
+                    containerColor = ErrorRed,
+                    contentColor   = Color.White,
+                ),
+                shape   = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier.height(36.dp),
+            ) {
+                Text("断开", style = MaterialTheme.typography.labelLarge)
+            }
+        }
 
-        HorizontalDivider(color = Color(0xFF2A2A2A))
+        HorizontalDivider(color = BorderSubtle)
 
-        // ── SCROLLABLE SETTINGS ───────────────────────────────────────────────
+        // ── Scrollable settings ───────────────────────────────────────────
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            // Screens
+            // Screen selector
             if (screens.isNotEmpty()) {
-                DrawerSection("屏幕切换") {
+                DrawerSection("屏幕") {
                     screens.forEach { screen ->
-                        DrawerRow(
-                            label = screen.name,
-                            sublabel = "${screen.width}×${screen.height}",
-                            active = screen.index == curScreen,
-                            onClick = { onSwitchScreen(screen.index) },
-                        )
+                        val isActive = screen.index == curScreen
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isActive) KeySurfaceActive else KeySurface)
+                                .border(1.dp, if (isActive) Accent.copy(0.4f) else BorderSubtle, RoundedCornerShape(10.dp))
+                                .clickable { onSwitchScreen(screen.index) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment     = Alignment.CenterVertically,
+                        ) {
+                            Text(screen.name, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+                            Text("${screen.width}×${screen.height}", style = MaterialTheme.typography.bodySmall, color = TextTertiary)
+                        }
+                        Spacer(Modifier.height(4.dp))
                     }
                 }
             }
@@ -296,147 +542,126 @@ private fun SessionDrawer(
             DrawerSection("帧率") {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(30, 60, 120).forEach { f ->
-                        TinyToggleBtn("${f}fps", f == fps) { onChangeFps(f) }
+                        DrawerToggleBtn("${f}fps", f == fps) { onChangeFps(f) }
                     }
                 }
             }
 
             // Video mode
-            DrawerSection("视频区操作模式") {
+            DrawerSection("视频区模式") {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TinyToggleBtn("触屏",  videoTouchscreen)  { onToggleVideoMode(true) }
-                    TinyToggleBtn("触控板", !videoTouchscreen) { onToggleVideoMode(false) }
+                    DrawerToggleBtn("触屏",   videoTouchscreen)  { onToggleVideoMode(true) }
+                    DrawerToggleBtn("触控板", !videoTouchscreen) { onToggleVideoMode(false) }
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
                     if (videoTouchscreen) "点哪跳哪 · 长按右键 · 双指滚动"
-                    else "超大触控板 · 双指滚动/捏合 · 三指手势",
-                    color = Color(0xFF555555), fontSize = 10.sp,
+                    else "相对移动 · 双指滚动 · 三指手势",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextTertiary,
                 )
-            }
-
-            // Layout — only mirror toggle remains; flip removed (use system rotation)
-            DrawerSection("布局") {
-                DrawerSwitch("控制区在左（横向反转）", mirrorLayout, onToggleMirror)
             }
 
             // Drag lock
             DrawerSection("拖拽模式") {
-                DrawerSwitch("拖拽锁（长按0.45s后才可拖拽，关闭则自由移动）",
-                    dragLockEnabled, onToggleDragLock)
-            }
-
-            // Audio
-            DrawerSection("语音传输") {
-                DrawerSwitch("开启麦克风传输", audioOn, onToggleAudio)
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    "开启后手机麦克风实时传至 Mac 播放（系统声音传输会自动暂停以防回声）。\n" +
-                    "要同时使用两者而不回声：Mac「系统设置→声音」将输入/输出设置为不同设备，\n" +
-                    "例如输出用 AirPods，输入用内置麦克风。",
-                    color = Color(0xFF666666), fontSize = 10.sp,
+                DrawerSwitch(
+                    label   = "拖拽锁（长按后才可拖拽）",
+                    checked = dragLockEnabled,
+                    onChange = onToggleDragLock,
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-            Text("点击空白区域或再次按返回关闭",
-                color = Color(0xFF3A3A3A), fontSize = 10.sp,
-                modifier = Modifier.fillMaxWidth())
-        }
-    }
-}
-
-// ── Drawer components ─────────────────────────────────────────────────────────
-
-@Composable
-private fun DrawerTopBar(
-    state: RemoteSession.State,
-    resolution: Pair<Int, Int>?,
-    onDisconnect: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF1A1A1A))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column {
-            Text(
-                if (state == RemoteSession.State.Connected) "● 已连接" else "○ 断开",
-                color  = if (state == RemoteSession.State.Connected) Color(0xFF4CAF50) else Color(0xFFB0B0B0),
-                fontSize = 13.sp,
-            )
-            resolution?.let { (w, h) ->
-                Text("${w}×${h}", color = Color(0xFF555555), fontSize = 10.sp)
+            // Audio
+            DrawerSection("麦克风传输") {
+                DrawerSwitch(
+                    label   = "开启麦克风实时传至 Mac",
+                    checked = audioOn,
+                    onChange = onToggleAudio,
+                )
             }
+
+            // Layout / orientation
+            DrawerSection("布局设置") {
+                DrawerSwitch(
+                    label   = "锁定竖屏方向",
+                    sublabel = "关闭时随系统自动旋转横竖屏",
+                    checked = lockPortrait,
+                    onChange = onToggleLockPortrait,
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "点击画面或再次按返回键关闭",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextTertiary.copy(alpha = 0.5f),
+            )
         }
-        Button(
-            onClick = onDisconnect,
-            colors  = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFB23A48), contentColor = Color.White),
-            shape   = RoundedCornerShape(6.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            modifier = Modifier.height(32.dp),
-        ) { Text("断开", fontSize = 12.sp) }
     }
 }
+
+// ── Drawer sub-components ─────────────────────────────────────────────────
 
 @Composable
 private fun DrawerSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, color = Color(0xFF666666), fontSize = 11.sp)
+        Text(
+            text  = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = TextTertiary,
+        )
         content()
     }
 }
 
 @Composable
-private fun DrawerRow(label: String, sublabel: String, active: Boolean, onClick: () -> Unit) {
+private fun DrawerToggleBtn(label: String, active: Boolean, onClick: () -> Unit) {
     val bg by animateColorAsState(
-        if (active) Color(0xFF1D3557) else Color(0xFF1E1E1E), label = "dr_bg")
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label,    color = Color.White, fontSize = 12.sp)
-        Text(sublabel, color = Color(0xFF555555), fontSize = 10.sp)
-    }
+        targetValue = if (active) Accent else KeySurface,
+        animationSpec = tween(180),
+        label = "dtb_bg",
+    )
+    val tc by animateColorAsState(
+        targetValue = if (active) Color.White else TextSecondary,
+        animationSpec = tween(180),
+        label = "dtb_tc",
+    )
+    Button(
+        onClick  = onClick,
+        colors   = ButtonDefaults.buttonColors(containerColor = bg, contentColor = tc),
+        shape    = RoundedCornerShape(8.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+        modifier = Modifier.height(32.dp),
+        elevation = null,
+    ) { Text(label, style = MaterialTheme.typography.labelMedium) }
 }
 
 @Composable
-private fun DrawerSwitch(label: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
+private fun DrawerSwitch(
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+    sublabel: String? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment     = Alignment.CenterVertically,
     ) {
-        Text(label, color = Color(0xFFCCCCCC), fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+            if (sublabel != null) {
+                Text(sublabel, style = MaterialTheme.typography.bodySmall, color = TextTertiary)
+            }
+        }
         Switch(
-            checked  = checked,
-            onCheckedChange = onChanged,
-            colors   = SwitchDefaults.colors(
-                checkedTrackColor   = Color(0xFF4A90E2),
-                uncheckedTrackColor = Color(0xFF333333),
+            checked         = checked,
+            onCheckedChange = onChange,
+            colors          = SwitchDefaults.colors(
+                checkedTrackColor   = Accent,
+                uncheckedTrackColor = SurfaceL3,
+                uncheckedBorderColor = BorderDefault,
             ),
         )
     }
-}
-
-@Composable
-private fun TinyToggleBtn(label: String, active: Boolean, onClick: () -> Unit) {
-    val bg by animateColorAsState(
-        if (active) Color(0xFF4A90E2) else Color(0xFF2A2A2A), label = "ttb_bg")
-    Button(
-        onClick = onClick,
-        colors  = ButtonDefaults.buttonColors(containerColor = bg, contentColor = Color.White),
-        shape   = RoundedCornerShape(5.dp),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-        modifier = Modifier.height(30.dp),
-    ) { Text(label, fontSize = 11.sp) }
 }

@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -49,7 +50,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.1")
 
     // Compose BOM keeps all Compose artifacts in lockstep
-    val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
+    val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -59,5 +60,11 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // DataStore — persistent key-value storage for saved hosts & settings
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // JSON serialization for saved hosts list
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

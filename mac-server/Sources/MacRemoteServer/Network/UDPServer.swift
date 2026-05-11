@@ -1,16 +1,11 @@
 import Foundation
-import Network
 
 /// UDP server that:
-///   - Listens on a port for control events from the Android client
+///   - Listens on a port for control events from the iOS/Android client
 ///   - Learns the client's UDP source endpoint from the first packet
 ///   - Exposes `send(_:to:port:)` to push encoded video fragments back
 ///
-/// 实现说明：
-///   使用 BSD socket (GCDAsyncSocket 思路的纯 Foundation 实现) 而非 NWListener，
-///   原因是 NWListener 对 UDP 的连接模型存在第一个包丢失的竞态，
-///   且无法直接在同一 socket 上收发（NWListener 只接收）。
-///   改用 GCD + POSIX socket 在同一 fd 上收发，消除这个竞态。
+/// 收发复用同一 POSIX socket fd，消除 NWConnection 建立延迟和随机源端口问题。
 final class UDPServer {
 
     private let listenPort: UInt16
@@ -18,12 +13,6 @@ final class UDPServer {
 
     private var serverFd: Int32 = -1
     private var source: DispatchSourceRead?
-
-    /// For sending video back to the client, we keep a separate outbound
-    /// NWConnection so we don't need to know the client's source port in advance.
-    private var outboundConnections: [String: NWConnection] = [:]
-    private let outLock = NSLock()
-    private let outQueue = DispatchQueue(label: "LowRemote.UDPServer.out")
 
     var onControlEvent: ((ControlEvent) -> Void)?
     var onFirstPacketFromClient: ((String, UInt16) -> Void)?
@@ -80,10 +69,6 @@ final class UDPServer {
         source?.cancel()
         source = nil
         serverFd = -1
-        outLock.lock()
-        for c in outboundConnections.values { c.cancel() }
-        outboundConnections.removeAll()
-        outLock.unlock()
     }
 
     // MARK: - Inbound (same fd, GCD)
@@ -151,29 +136,32 @@ final class UDPServer {
         }
     }
 
-    // MARK: - Outbound (NWConnection, separate from receive path)
+    // MARK: - Outbound（复用同一 POSIX socket，与入站 fd 相同）
+    //
+    // 原实现用独立的 NWConnection 发包，存在两个问题：
+    //   1. NWConnection 建立需要时间，在此期间发出的帧被丢弃
+    //   2. NWConnection 的源端口是系统随机分配的，不是 8891
+    // 改用 sendto() 复用入站 fd，直接发往记录的客户端地址。
 
     func send(_ data: Data, to host: String, port: UInt16) {
-        let key = "\(host):\(port)"
-        outLock.lock()
-        var conn = outboundConnections[key]
-        if conn == nil {
-            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-                outLock.unlock()
-                return
-            }
-            let newConn = NWConnection(
-                host: NWEndpoint.Host(host),
-                port: nwPort,
-                using: .udp
-            )
-            newConn.stateUpdateHandler = { _ in }
-            newConn.start(queue: outQueue)
-            outboundConnections[key] = newConn
-            conn = newConn
-        }
-        outLock.unlock()
+        guard serverFd >= 0 else { return }
 
-        conn?.send(content: data, completion: .contentProcessed { _ in })
+        var destAddr = sockaddr_in()
+        destAddr.sin_family = sa_family_t(AF_INET)
+        destAddr.sin_port   = port.bigEndian
+        inet_pton(AF_INET, host, &destAddr.sin_addr)
+
+        data.withUnsafeBytes { rawBuf in
+            withUnsafeBytes(of: &destAddr) { addrPtr in
+                _ = sendto(
+                    serverFd,
+                    rawBuf.baseAddress!,
+                    data.count,
+                    0,
+                    addrPtr.baseAddress!.assumingMemoryBound(to: sockaddr.self),
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
     }
 }

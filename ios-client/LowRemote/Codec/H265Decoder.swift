@@ -141,11 +141,14 @@ final class H265Decoder {
             return
         }
 
+        // 必须使用 VTDecompressionSessionDecodeFrameWithOutputHandler
+        // 不能使用带 outputCallback:nil 的 VTDecompressionSessionDecodeFrame —— 那个重载
+        // 不支持闭包回调，会导致解码器静默丢帧
         let flags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
         var infoFlags = VTDecodeInfoFlags()
-        let decodeStatus = VTDecompressionSessionDecodeFrame(
+        let decodeStatus = VTDecompressionSessionDecodeFrameWithOutputHandler(
             s, sampleBuffer: sb, flags: flags, infoFlagsOut: &infoFlags
-        ) { [weak self] status, _, imageBuffer, _, _, _ in
+        ) { [weak self] status, _, imageBuffer, _, _ in
             guard let self = self else { return }
             guard status == noErr, let imageBuffer = imageBuffer else {
                 if status != noErr {
@@ -157,7 +160,7 @@ final class H265Decoder {
         }
 
         if decodeStatus != noErr {
-            NSLog("[H265Decoder] VTDecompressionSessionDecodeFrame failed: \(decodeStatus)")
+            NSLog("[H265Decoder] VTDecompressionSessionDecodeFrameWithOutputHandler failed: \(decodeStatus)")
         }
     }
 
@@ -177,6 +180,13 @@ final class H265Decoder {
         ]
 
         var s: VTDecompressionSession?
+
+        // 模拟器没有 HEVC 硬件解码器，强制请求硬件会阻塞/卡死，加以提示后直接返回
+        #if targetEnvironment(simulator)
+        NSLog("[H265Decoder] ⚠️ 运行在模拟器，H.265 硬件解码不可用，请在真机上测试视频流功能")
+        return
+        #else
+        // Session must use nil outputCallback when using closure-based VTDecompressionSessionDecodeFrame.
         let st = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: newDesc,
@@ -196,6 +206,7 @@ final class H265Decoder {
         } else {
             NSLog("[H265Decoder] VTDecompressionSessionCreate failed: \(st)")
         }
+        #endif
     }
 
     // MARK: - HVCC conversion

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh-Hans</string>
+    <key>CFBundleDisplayName</key>
+    <string>LowRemote</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>LowRemote</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+
+    <!-- 横竖屏均支持 -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- 权限描述 -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>LowRemote 需要访问麦克风，以便将您的声音传输到 Mac 电脑。</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>LowRemote 需要访问局域网，以便发现并连接到 Mac 电脑。</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_maclocalremote._tcp</string>
+    </array>
+
+    <!-- 后台模式：音频、网络 -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+        <string>fetch</string>
+    </array>
+
+    <!-- 全屏，隐藏状态栏 -->
+    <key>UIStatusBarHidden</key>
+    <false/>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <true/>
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+
+    <!-- 不支持 Mac Catalyst -->
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+</dict>
+</plist>

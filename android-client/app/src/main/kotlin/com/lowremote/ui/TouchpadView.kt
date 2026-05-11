@@ -158,6 +158,13 @@ class TouchpadView @JvmOverloads constructor(
         // Show drag-lock hint only when drag is active
         if (dragActive) {
             canvas.drawText("🔒  拖拽中", width / 2f, height / 2f + hintPaint.textSize / 3f, hintPaint)
+        } else {
+            // Center hint text: two lines
+            val line1 = if (dragLockEnabled) "长按后拖动可移动窗口" else "开启拖拽：长按后拖动"
+            val line2 = if (scrollModeEnabled) "滚动模式：单指上下滚动" else "开启滚动：单指变双指"
+            val lineH = hintPaint.textSize * 1.5f
+            canvas.drawText(line1, width / 2f, height / 2f - lineH / 2f + hintPaint.textSize / 3f, hintPaint)
+            canvas.drawText(line2, width / 2f, height / 2f + lineH / 2f + hintPaint.textSize / 3f, hintPaint)
         }
     }
 

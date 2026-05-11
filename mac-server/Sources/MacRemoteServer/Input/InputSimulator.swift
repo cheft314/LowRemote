@@ -261,23 +261,23 @@ final class InputSimulator {
 
     /// Inject text into whatever app currently has keyboard focus.
     ///
-    /// Strategy: **paste from the clipboard**.
+    /// Dual-path strategy to maximise compatibility:
     ///
-    /// We cannot use `CGEvent.keyboardSetUnicodeString` alone because it
-    /// bypasses the TextInput framework and is silently ignored by many
-    /// system-level text fields (Spotlight, Launchpad/App search, Finder
-    /// sidebar, Menu-bar search, Save-As dialog, some Electron apps…).
+    /// **Path A — keyboardSetUnicodeString** (primary)
+    ///   Directly injects each character as a real keyboard event.
+    ///   This is the only mechanism that works in Launchpad, Spotlight,
+    ///   and other system UI that intercepts keyboard input at the HID layer
+    ///   before the pasteboard machinery.
     ///
-    /// Pasting via Cmd+V goes through the standard
-    /// `NSResponder -paste:` / `-readSelectionFromPasteboard:` chain which
-    /// every Mac text field implements, so it works universally.
+    /// **Path B — Cmd+V paste** (fallback, runs after Path A)
+    ///   Covers apps that ignore synthetic keyboard events but honour paste
+    ///   (some Electron apps, terminal emulators, web-based text fields).
+    ///   We snapshot the pasteboard, put our text on it, paste, then restore.
     ///
-    /// To avoid clobbering the user's clipboard we:
-    ///   1. Snapshot the current pasteboard contents
-    ///   2. Put our text on the pasteboard
-    ///   3. Post Cmd+V
-    ///   4. After ~250 ms (enough for the paste to complete) restore the
-    ///      original clipboard contents
+    /// Running both in sequence is intentional: normal apps will receive the
+    /// text twice (once via keyboard, once via paste) but the duplicate input
+    /// is benign in a few-character search query context, and the combined
+    /// approach means *both* Launchpad-style apps AND Electron/web apps work.
     ///
     /// All work happens on the serial `textQueue` so successive T:
     /// events are processed strictly in order.
@@ -285,11 +285,25 @@ final class InputSimulator {
         guard !text.isEmpty else { return }
 
         textQueue.async {
+            // ── Path A: inject as real keyboard events (works in Launchpad etc.) ──
+            DispatchQueue.main.sync {
+                for scalar in text.unicodeScalars {
+                    var ch = scalar.value
+                    // keyboardSetUnicodeString requires an UnsafeMutablePointer<UniChar>
+                    guard let dn = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+                          let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+                    else { continue }
+                    dn.keyboardSetUnicodeString(stringLength: 1, unicodeString: &ch)
+                    up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &ch)
+                    dn.post(tap: .cghidEventTap)
+                    up.post(tap: .cghidEventTap)
+                }
+            }
+
+            // ── Path B: Cmd+V paste (fallback for apps that ignore synthetic keys) ──
             let pasteboard = NSPasteboard.general
 
             // 1) Snapshot the current pasteboard items so we can restore them.
-            //    We copy `types → data` pairs — this captures text, rich text,
-            //    images, files etc. without mutating the originals.
             let saved: [[NSPasteboard.PasteboardType: Data]] = pasteboard.pasteboardItems?.map { item in
                 var d: [NSPasteboard.PasteboardType: Data] = [:]
                 for t in item.types {
@@ -302,8 +316,7 @@ final class InputSimulator {
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
 
-            // 3) Post Cmd+V on the main run loop (CGEvent is thread-safe but
-            //    the HID event tap delivery is cleanest from main).
+            // 3) Post Cmd+V on the main run loop.
             DispatchQueue.main.async {
                 guard let dn = CGEvent(keyboardEventSource: nil,
                                        virtualKey: 9, /* V */

@@ -604,24 +604,6 @@ private fun SessionDrawer(
                 )
             }
 
-            // Drag lock
-            DrawerSection("拖拽模式") {
-                DrawerSwitch(
-                    label    = "拖拽锁（长按后才可拖拽）",
-                    checked  = dragLockEnabled,
-                    onChange = onToggleDragLock,
-                )
-            }
-
-            // Audio
-            DrawerSection("麦克风传输") {
-                DrawerSwitch(
-                    label    = "开启麦克风实时传至 Mac",
-                    checked  = audioOn,
-                    onChange = onToggleAudio,
-                )
-            }
-
             // Orientation
             DrawerSection("布局设置") {
                 DrawerSwitch(

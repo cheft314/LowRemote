@@ -141,13 +141,15 @@ final class H265Decoder {
             return
         }
 
-        // 必须使用 VTDecompressionSessionDecodeFrameWithOutputHandler
-        // 不能使用带 outputCallback:nil 的 VTDecompressionSessionDecodeFrame —— 那个重载
-        // 不支持闭包回调，会导致解码器静默丢帧
+        // 闭包回调：`VTDecompressionSessionDecodeFrame(_:sampleBuffer:flags:infoFlagsOut:outputHandler:)`
+        //（对应 VTDecompressionSessionDecodeFrameWithOutputHandler；勿加 frameOptions——带 frameOptions 的重载仅在 iOS 18+）。
         let flags: VTDecodeFrameFlags = [._EnableAsynchronousDecompression]
         var infoFlags = VTDecodeInfoFlags()
-        let decodeStatus = VTDecompressionSessionDecodeFrameWithOutputHandler(
-            s, sampleBuffer: sb, flags: flags, infoFlagsOut: &infoFlags
+        let decodeStatus = VTDecompressionSessionDecodeFrame(
+            s,
+            sampleBuffer: sb,
+            flags: flags,
+            infoFlagsOut: &infoFlags
         ) { [weak self] status, _, imageBuffer, _, _ in
             guard let self = self else { return }
             guard status == noErr, let imageBuffer = imageBuffer else {
@@ -160,7 +162,7 @@ final class H265Decoder {
         }
 
         if decodeStatus != noErr {
-            NSLog("[H265Decoder] VTDecompressionSessionDecodeFrameWithOutputHandler failed: \(decodeStatus)")
+            NSLog("[H265Decoder] VTDecompressionSessionDecodeFrame failed: \(decodeStatus)")
         }
     }
 

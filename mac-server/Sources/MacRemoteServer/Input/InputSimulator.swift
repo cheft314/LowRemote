@@ -287,14 +287,16 @@ final class InputSimulator {
         textQueue.async {
             // ── Path A: inject as real keyboard events (works in Launchpad etc.) ──
             DispatchQueue.main.sync {
-                for scalar in text.unicodeScalars {
-                    var ch = scalar.value
-                    // keyboardSetUnicodeString requires an UnsafeMutablePointer<UniChar>
+                // Encode text as UTF-16 code units (UniChar = UInt16), which is
+                // what CGEvent.keyboardSetUnicodeString expects.
+                let utf16Units = Array(text.utf16)
+                for ch in utf16Units {
                     guard let dn = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
                           let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
                     else { continue }
-                    dn.keyboardSetUnicodeString(stringLength: 1, unicodeString: &ch)
-                    up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &ch)
+                    var unit = ch
+                    dn.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+                    up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
                     dn.post(tap: .cghidEventTap)
                     up.post(tap: .cghidEventTap)
                 }

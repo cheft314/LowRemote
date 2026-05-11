@@ -96,7 +96,16 @@ final class RemoteSession {
         decoderLock.lock()
         defer { decoderLock.unlock() }
         videoView = view
-        if let v = view, state == .connected, decoder == nil {
+        guard let v = view else { return }
+        // 更新已运行解码器的输出目标（解决 onAppear 时 view 为 nil 的竞态）
+        if let dec = decoder {
+            dec.onDecodedFrame = { [weak v] pixelBuffer in
+                v?.enqueue(pixelBuffer)
+            }
+            return
+        }
+        // 解码器尚未启动：若已连接则立即启动（补偿 RESOLUTION/OK 到达时 view 还未注入的竞态）
+        if state == .connected {
             startDecoderLocked(view: v)
         }
     }
@@ -288,7 +297,17 @@ final class RemoteSession {
     private func startDecoderIfReady() {
         decoderLock.lock()
         defer { decoderLock.unlock() }
-        guard let v = videoView else { return }
+        // 若 videoView 尚未注入（onViewReady 还未回调），延迟到主线程下一 runloop 再试一次
+        guard let v = videoView else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.decoderLock.lock()
+                defer { self.decoderLock.unlock() }
+                guard let v = self.videoView else { return }
+                self.startDecoderLocked(view: v)
+            }
+            return
+        }
         startDecoderLocked(view: v)
     }
 

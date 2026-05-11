@@ -95,6 +95,7 @@ final class TouchpadView: UIView {
 
     private func updateBorderGradient() {
         gradientLayer?.removeFromSuperlayer()
+        guard bounds.width > 0, bounds.height > 0 else { return }
         let mask = CAShapeLayer()
         mask.path        = UIBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
                                          cornerRadius: 11.25).cgPath
@@ -123,6 +124,7 @@ final class TouchpadView: UIView {
     }
 
     override func draw(_ rect: CGRect) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
         // 拖拽激活时：蓝色半透明填充

@@ -29,7 +29,7 @@ final class AudioPlayer {
             commonFormat: .pcmFormatFloat32,
             sampleRate: 48_000,
             channels: 2,
-            interleaved: true          // Mac AudioCaptureManager 输出交错
+            interleaved: false   // ← 必须是 false，AVAudioEngine 不接受 interleaved 格式
         ) else {
             NSLog("[AudioPlayer] 无法创建 AVAudioFormat"); return
         }
@@ -59,28 +59,28 @@ final class AudioPlayer {
     }
 
     /// 写入原始 PCM 字节（Float32 交错，48kHz stereo）
+    // 改动 2：write() 里手动 de-interleave
     func write(_ data: Data) {
         guard isRunning, let fmt = inputFormat else { return }
-
-        let bytesPerFrame = 8  // Float32(4) × 2 channels
-        let frameCount = data.count / bytesPerFrame
+        let frameCount = data.count / 8   // 4 bytes × 2 ch
         guard frameCount > 0 else { return }
-
         guard let buf = AVAudioPCMBuffer(pcmFormat: fmt,
                                          frameCapacity: AVAudioFrameCount(frameCount)) else { return }
         buf.frameLength = AVAudioFrameCount(frameCount)
 
-        // Float32 交错数据直接写入 interleaved buffer
+        guard let channelData = buf.floatChannelData else { return }
+        let L = channelData[0]
+        let R = channelData[1]
+
         data.withUnsafeBytes { rawPtr in
-            guard let src = rawPtr.baseAddress else { return }
-            if let dst = buf.floatChannelData?[0] {
-                memcpy(dst, src, frameCount * bytesPerFrame)
+            guard let base = rawPtr.baseAddress?.assumingMemoryBound(to: Float.self) else { return }
+            for i in 0..<frameCount {
+                L[i] = base[i * 2]        // 偶数 = 左声道
+                R[i] = base[i * 2 + 1]   // 奇数 = 右声道
             }
         }
-
         playerNode.scheduleBuffer(buf, completionHandler: nil)
     }
-
     // MARK: - AVAudioSession
 
     private func configureAudioSession() {

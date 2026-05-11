@@ -84,9 +84,14 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     var onEvent: ((ControlEvent) -> Unit)? = null
-    var sensitivity: Float = 1.2f   // reduced from 2.0 — smoother cursor feel
-    /** When true, long-press + drag = drag.  When false, all single-finger moves are plain moves. */
+    var sensitivity: Float = 1.2f
+    /** When true, long-press + drag = drag. */
     var dragLockEnabled: Boolean = false
+    /**
+     * When true, single-finger vertical swipe sends scroll events instead of
+     * moving the cursor. Horizontal movement is ignored in this mode.
+     */
+    var scrollModeEnabled: Boolean = false
 
     private val dp             = context.resources.displayMetrics.density
     private val tapMovePx      = TAP_MOVE_DP  * dp
@@ -150,10 +155,10 @@ class TouchpadView @JvmOverloads constructor(
         // Gradient border
         canvas.drawRoundRect(ins, ins, width - ins, height - ins, r - ins, r - ins, borderPaint)
 
-        // Hint text
-        val hint = if (dragActive) "🔒  拖拽中"
-                   else "触控板  ·  双指滚动  ·  三指手势"
-        canvas.drawText(hint, width / 2f, height / 2f + hintPaint.textSize / 3f, hintPaint)
+        // Show drag-lock hint only when drag is active
+        if (dragActive) {
+            canvas.drawText("🔒  拖拽中", width / 2f, height / 2f + hintPaint.textSize / 3f, hintPaint)
+        }
     }
 
     // ── Touch state ───────────────────────────────────────────────────────────
@@ -313,6 +318,16 @@ class TouchpadView @JvmOverloads constructor(
         val now = SystemClock.uptimeMillis()
         val dx  = ev.x - sfLastX
         val dy  = ev.y - sfLastY
+
+        // Scroll mode: single finger → scroll, no cursor move
+        if (scrollModeEnabled) {
+            sfLastX = ev.x; sfLastY = ev.y
+            if (dy == 0f) return
+            val pyRaw = dy * SCROLL_SCALE
+            val pyI = pyRaw.toInt().coerceIn(-SCROLL_MAX_PX, SCROLL_MAX_PX)
+            if (pyI != 0) onEvent?.invoke(ControlEvent.ScrollPixels(0, pyI))
+            return
+        }
 
         if (dragLockEnabled && !dragActive && now >= longPressTime &&
             hypot(ev.x - sfStartX, ev.y - sfStartY) < tapMovePx * 4f

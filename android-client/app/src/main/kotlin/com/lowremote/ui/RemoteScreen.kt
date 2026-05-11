@@ -61,6 +61,7 @@ fun RemoteScreen(
     var drawerOpen       by remember { mutableStateOf(false) }
     var videoTouchscreen by remember { mutableStateOf(true) }
     var dragLockEnabled  by remember { mutableStateOf(false) }
+    var scrollModeEnabled by remember { mutableStateOf(false) }
     val videoViewRef     = remember { mutableStateOf<VideoTouchView?>(null) }
 
     // ── Lock-orientation effect ───────────────────────────────────────────
@@ -71,7 +72,6 @@ fun RemoteScreen(
         else
             android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         onDispose {
-            // Restore on leave
             activity?.requestedOrientation =
                 android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         }
@@ -106,46 +106,51 @@ fun RemoteScreen(
                 .background(Background),
         ) {
             if (isLandscape) {
-                // ── LANDSCAPE: left video + right panel ───────────────────
                 LandscapeLayout(
-                    session          = session,
-                    resolution       = resolution,
-                    videoTouchscreen = videoTouchscreen,
-                    dragLockEnabled  = dragLockEnabled,
-                    audioOn          = audioOn,
-                    videoViewRef     = videoViewRef,
-                    onDrawerOpen     = { drawerOpen = true },
-                    onEvent          = { session.sendEvent(it) },
-                    onDragLock       = { dragLockEnabled = it },
-                    onAudio          = ::toggleAudio,
-                    onSendText       = { session.sendEvent(ControlEvent.TypeText(it)) },
-                    onSendFiles      = { uris -> session.sendFiles(uris, context) },
+                    session           = session,
+                    resolution        = resolution,
+                    videoTouchscreen  = videoTouchscreen,
+                    dragLockEnabled   = dragLockEnabled,
+                    scrollModeEnabled = scrollModeEnabled,
+                    audioOn           = audioOn,
+                    videoViewRef      = videoViewRef,
+                    onEvent           = { session.sendEvent(it) },
+                    onDragLock        = { dragLockEnabled = it },
+                    onScrollMode      = { scrollModeEnabled = it },
+                    onAudio           = ::toggleAudio,
+                    onSendText        = { session.sendEvent(ControlEvent.TypeText(it)) },
+                    onSendFiles       = { uris -> session.sendFiles(uris, context) },
                 )
             } else {
-                // ── PORTRAIT: top-mid-bottom 3-section ────────────────────
                 PortraitLayout(
-                    session          = session,
-                    resolution       = resolution,
-                    videoTouchscreen = videoTouchscreen,
-                    dragLockEnabled  = dragLockEnabled,
-                    audioOn          = audioOn,
-                    videoViewRef     = videoViewRef,
-                    onDrawerOpen     = { drawerOpen = true },
-                    onEvent          = { session.sendEvent(it) },
-                    onDragLock       = { dragLockEnabled = it },
-                    onAudio          = ::toggleAudio,
-                    onSendText       = { session.sendEvent(ControlEvent.TypeText(it)) },
-                    onSendFiles      = { uris -> session.sendFiles(uris, context) },
+                    session           = session,
+                    resolution        = resolution,
+                    videoTouchscreen  = videoTouchscreen,
+                    dragLockEnabled   = dragLockEnabled,
+                    scrollModeEnabled = scrollModeEnabled,
+                    audioOn           = audioOn,
+                    videoViewRef      = videoViewRef,
+                    onEvent           = { session.sendEvent(it) },
+                    onDragLock        = { dragLockEnabled = it },
+                    onScrollMode      = { scrollModeEnabled = it },
+                    onAudio           = ::toggleAudio,
+                    onSendText        = { session.sendEvent(ControlEvent.TypeText(it)) },
+                    onSendFiles       = { uris -> session.sendFiles(uris, context) },
                 )
             }
 
-            // ── Settings drawer (slides from right) ───────────────────────
+            // ── Settings drawer (slides from right, 50% width) ────────────
             AnimatedVisibility(
                 visible  = drawerOpen,
                 enter    = slideInHorizontally(tween(260)) { it },
                 exit     = slideOutHorizontally(tween(220)) { it },
                 modifier = Modifier.align(Alignment.CenterEnd),
             ) {
+                // The drawer itself is 50% wide and handles its own touches.
+                // We do NOT add a full-screen scrim here; instead, the
+                // BackHandler / edge-swipe closes it, and the scrim below
+                // only covers the NON-drawer half so clicks on the drawer
+                // items work normally.
                 SessionDrawer(
                     fps              = fps,
                     state            = state,
@@ -169,14 +174,16 @@ fun RemoteScreen(
                 )
             }
 
-            // Tap-outside to close drawer
+            // Tap on the LEFT half (non-drawer area) to close drawer
             if (drawerOpen) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxHeight()
+                        .fillMaxWidth(0.5f)   // only the half NOT covered by drawer
+                        .align(Alignment.CenterStart)
                         .clickable(
                             indication = null,
-                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            interactionSource = remember { MutableInteractionSource() },
                         ) { drawerOpen = false }
                 )
             }
@@ -194,11 +201,12 @@ private fun PortraitLayout(
     resolution: Pair<Int, Int>?,
     videoTouchscreen: Boolean,
     dragLockEnabled: Boolean,
+    scrollModeEnabled: Boolean,
     audioOn: Boolean,
     videoViewRef: MutableState<VideoTouchView?>,
-    onDrawerOpen: () -> Unit,
     onEvent: (ControlEvent) -> Unit,
     onDragLock: (Boolean) -> Unit,
+    onScrollMode: (Boolean) -> Unit,
     onAudio: (Boolean) -> Unit,
     onSendText: (String) -> Unit,
     onSendFiles: (List<android.net.Uri>) -> Unit,
@@ -219,7 +227,6 @@ private fun PortraitLayout(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(with(LocalDensity.current) { aspectH.toDp() }),
-                contentAlignment = Alignment.Center,
             ) {
                 AndroidView(
                     factory = { c ->
@@ -249,35 +256,15 @@ private fun PortraitLayout(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
-
-                // Settings button overlay (top-right corner of video)
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .clickable(onClick = onDrawerOpen),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Settings,
-                        contentDescription = "设置",
-                        tint = Color.White.copy(alpha = 0.8f),
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                // No floating settings button — use back-swipe to open drawer
             }
         }
 
-        // ── MIDDLE: Shortcut keyboard — fills remaining space above touchpad
+        // ── MIDDLE: Shortcut keyboard ────────────────────────────────────
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             ShortcutKeyboard(
                 modifier    = Modifier.fillMaxSize(),
                 onEvent     = onEvent,
-                dragLockOn  = dragLockEnabled,
-                onDragLock  = onDragLock,
                 audioOn     = audioOn,
                 onAudio     = onAudio,
                 onSendText  = onSendText,
@@ -285,18 +272,39 @@ private fun PortraitLayout(
             )
         }
 
-        // ── BOTTOM: Touchpad — fixed 16:9 portrait ratio ───────────────────
-        AndroidView(
-            factory = { c ->
-                TouchpadView(c).also { v ->
-                    v.dragLockEnabled = dragLockEnabled
-                    v.onEvent = { ev -> onEvent(ev) }
-                }
-            },
-            update  = { v -> v.dragLockEnabled = dragLockEnabled },
-            // fillMaxWidth + wrapContentHeight lets onMeasure(16:9) do its job
-            modifier = Modifier.fillMaxWidth(),
-        )
+        // ── BOTTOM: Touchpad with drag/scroll overlay buttons ─────────────
+        Box(modifier = Modifier.fillMaxWidth()) {
+            AndroidView(
+                factory = { c ->
+                    TouchpadView(c).also { v ->
+                        v.dragLockEnabled   = dragLockEnabled
+                        v.scrollModeEnabled = scrollModeEnabled
+                        v.onEvent = { ev -> onEvent(ev) }
+                    }
+                },
+                update = { v ->
+                    v.dragLockEnabled   = dragLockEnabled
+                    v.scrollModeEnabled = scrollModeEnabled
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Drag-lock toggle — top-left of touchpad
+            TouchpadOverlayBtn(
+                label   = if (dragLockEnabled) "拖拽 ●" else "拖拽",
+                active  = dragLockEnabled,
+                modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                onClick = { onDragLock(!dragLockEnabled) },
+            )
+
+            // Scroll-mode toggle — top-right of touchpad
+            TouchpadOverlayBtn(
+                label   = if (scrollModeEnabled) "滚动 ●" else "滚动",
+                active  = scrollModeEnabled,
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                onClick = { onScrollMode(!scrollModeEnabled) },
+            )
+        }
     }
 }
 
@@ -309,11 +317,12 @@ private fun LandscapeLayout(
     resolution: Pair<Int, Int>?,
     videoTouchscreen: Boolean,
     dragLockEnabled: Boolean,
+    scrollModeEnabled: Boolean,
     audioOn: Boolean,
     videoViewRef: MutableState<VideoTouchView?>,
-    onDrawerOpen: () -> Unit,
     onEvent: (ControlEvent) -> Unit,
     onDragLock: (Boolean) -> Unit,
+    onScrollMode: (Boolean) -> Unit,
     onAudio: (Boolean) -> Unit,
     onSendText: (String) -> Unit,
     onSendFiles: (List<android.net.Uri>) -> Unit,
@@ -329,7 +338,7 @@ private fun LandscapeLayout(
         val rightWDp   = screenW - videoWDp
 
         Row(modifier = Modifier.fillMaxSize()) {
-            // Video panel
+            // Video panel — no floating button
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
@@ -365,27 +374,9 @@ private fun LandscapeLayout(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .clickable(onClick = onDrawerOpen),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Settings,
-                        contentDescription = "设置",
-                        tint = Color.White.copy(alpha = 0.8f),
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
             }
 
-            // Right control panel — keyboard on top, touchpad on bottom
+            // Right control panel
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
@@ -396,33 +387,78 @@ private fun LandscapeLayout(
                     ShortcutKeyboard(
                         modifier    = Modifier.fillMaxSize(),
                         onEvent     = onEvent,
-                        dragLockOn  = dragLockEnabled,
-                        onDragLock  = onDragLock,
                         audioOn     = audioOn,
                         onAudio     = onAudio,
                         onSendText  = onSendText,
                         onSendFiles = onSendFiles,
                     )
                 }
-                // Landscape touchpad: 16:10
-                AndroidView(
-                    factory = { c ->
-                        TouchpadView(c, isLandscape = true).also { v ->
-                            v.dragLockEnabled = dragLockEnabled
-                            v.onEvent = { ev -> onEvent(ev) }
-                        }
-                    },
-                    update  = { v -> v.dragLockEnabled = dragLockEnabled },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // Landscape touchpad with overlay buttons
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    AndroidView(
+                        factory = { c ->
+                            TouchpadView(c, isLandscape = true).also { v ->
+                                v.dragLockEnabled   = dragLockEnabled
+                                v.scrollModeEnabled = scrollModeEnabled
+                                v.onEvent = { ev -> onEvent(ev) }
+                            }
+                        },
+                        update = { v ->
+                            v.dragLockEnabled   = dragLockEnabled
+                            v.scrollModeEnabled = scrollModeEnabled
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TouchpadOverlayBtn(
+                        label   = if (dragLockEnabled) "拖拽 ●" else "拖拽",
+                        active  = dragLockEnabled,
+                        modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+                        onClick = { onDragLock(!dragLockEnabled) },
+                    )
+                    TouchpadOverlayBtn(
+                        label   = if (scrollModeEnabled) "滚动 ●" else "滚动",
+                        active  = scrollModeEnabled,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                        onClick = { onScrollMode(!scrollModeEnabled) },
+                    )
+                }
             }
         }
     }
 }
 
+// ── Touchpad overlay button ───────────────────────────────────────────────
+@Composable
+private fun TouchpadOverlayBtn(
+    label: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val bgColor by animateColorAsState(
+        targetValue = if (active) Accent.copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.4f),
+        animationSpec = tween(160),
+        label = "tob_bg",
+    )
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(bgColor)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text  = label,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SESSION DRAWER
+// SESSION DRAWER  (50% screen width, no click-through to the drawer content)
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun SessionDrawer(
@@ -447,12 +483,18 @@ private fun SessionDrawer(
     Column(
         modifier = Modifier
             .fillMaxHeight()
-            .fillMaxWidth(0.78f)
+            .fillMaxWidth(0.5f)   // exactly half the screen
             .background(SurfaceL1)
             .border(
                 width = 1.dp,
                 color = BorderDefault,
                 shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp),
+            )
+            // consume all touches so they don't fall through to the scrim
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = { /* absorb */ },
             ),
     ) {
         // ── Top bar ───────────────────────────────────────────────────────
@@ -556,7 +598,7 @@ private fun SessionDrawer(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     if (videoTouchscreen) "点哪跳哪 · 长按右键 · 双指滚动"
-                    else "相对移动 · 双指滚动 · 三指手势",
+                    else "相对移动 · 双指滚动",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextTertiary,
                 )
@@ -565,8 +607,8 @@ private fun SessionDrawer(
             // Drag lock
             DrawerSection("拖拽模式") {
                 DrawerSwitch(
-                    label   = "拖拽锁（长按后才可拖拽）",
-                    checked = dragLockEnabled,
+                    label    = "拖拽锁（长按后才可拖拽）",
+                    checked  = dragLockEnabled,
                     onChange = onToggleDragLock,
                 )
             }
@@ -574,25 +616,25 @@ private fun SessionDrawer(
             // Audio
             DrawerSection("麦克风传输") {
                 DrawerSwitch(
-                    label   = "开启麦克风实时传至 Mac",
-                    checked = audioOn,
+                    label    = "开启麦克风实时传至 Mac",
+                    checked  = audioOn,
                     onChange = onToggleAudio,
                 )
             }
 
-            // Layout / orientation
+            // Orientation
             DrawerSection("布局设置") {
                 DrawerSwitch(
-                    label   = "锁定竖屏方向",
-                    sublabel = "关闭时随系统自动旋转横竖屏",
-                    checked = lockPortrait,
+                    label    = "锁定竖屏方向",
+                    sublabel = "关闭时随系统自动旋转",
+                    checked  = lockPortrait,
                     onChange = onToggleLockPortrait,
                 )
             }
 
             Spacer(Modifier.height(4.dp))
             Text(
-                "点击画面或再次按返回键关闭",
+                "← 点击左侧或按返回键关闭",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextTertiary.copy(alpha = 0.5f),
             )
@@ -658,8 +700,8 @@ private fun DrawerSwitch(
             checked         = checked,
             onCheckedChange = onChange,
             colors          = SwitchDefaults.colors(
-                checkedTrackColor   = Accent,
-                uncheckedTrackColor = SurfaceL3,
+                checkedTrackColor    = Accent,
+                uncheckedTrackColor  = SurfaceL3,
                 uncheckedBorderColor = BorderDefault,
             ),
         )

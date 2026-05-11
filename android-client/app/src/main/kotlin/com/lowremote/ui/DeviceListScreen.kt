@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -77,14 +78,14 @@ fun DeviceListScreen(
                 .background(Background)
                 .windowInsetsPadding(WindowInsets.systemBars),
         ) {
+            // ── Fixed header ──────────────────────────────────────────────
+            ScreenHeader(modifier = Modifier.align(Alignment.TopCenter).zIndex(1f))
+
+            // ── Scrollable content below header ───────────────────────────
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 32.dp),
+                contentPadding = PaddingValues(top = 112.dp, bottom = 32.dp),
             ) {
-                // ── Header ────────────────────────────────────────────────
-                item { ScreenHeader() }
-
-                // ── FPS selector ──────────────────────────────────────────
                 item {
                     FpsSelector(
                         selected  = selectedFps,
@@ -194,10 +195,11 @@ fun DeviceListScreen(
 // HEADER
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
-private fun ScreenHeader() {
+private fun ScreenHeader(modifier: Modifier = Modifier) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .background(Background)
             .drawBehind {
                 // Subtle radial glow at top-centre
                 drawCircle(

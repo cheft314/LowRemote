@@ -56,8 +56,6 @@ import com.lowremote.ui.theme.*
 fun ShortcutKeyboard(
     modifier:    Modifier = Modifier,
     onEvent:     (ControlEvent) -> Unit,
-    dragLockOn:  Boolean = false,
-    onDragLock:  (Boolean) -> Unit = {},
     audioOn:     Boolean = false,
     onAudio:     (Boolean) -> Unit = {},
     onSendText:  (String) -> Unit  = {},
@@ -97,14 +95,6 @@ fun ShortcutKeyboard(
                 .padding(horizontal = 6.dp, vertical = 5.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            ToolbarToggle(
-                icon     = if (dragLockOn) Icons.Outlined.Lock else Icons.Outlined.LockOpen,
-                label    = "拖拽",
-                active   = dragLockOn,
-                modifier = Modifier.weight(1f),
-                view     = rootView,
-                onClick  = { onDragLock(!dragLockOn) },
-            )
             ToolbarToggle(
                 icon     = Icons.Outlined.Mic,
                 label    = if (audioOn) "传音中" else "传音",
@@ -322,14 +312,17 @@ private fun InlineInputBar(onSend: (String) -> Unit) {
         AndroidView(
             factory = { ctx ->
                 EditText(ctx).apply {
-                    hint       = "输入文字发往 Mac（回车发送）"
+                    hint       = "输入文字发往 Mac…"
                     inputType  = android.text.InputType.TYPE_CLASS_TEXT or
-                                 android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                    imeOptions = EditorInfo.IME_ACTION_SEND
+                                 android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                                 android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                    imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
                     setTextColor(0xFFF0F0F8.toInt())
                     setHintTextColor(0xFF505065.toInt())
+                    textSize      = 10f          // 字体缩小为原来一半（原约 14sp）
                     background    = null
-                    maxLines      = 1
+                    minLines      = 3
+                    maxLines      = 3
                     editRef.value = this
 
                     setOnEditorActionListener { _, actionId, _ ->
@@ -386,11 +379,6 @@ private fun FilePickerBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "发送到 Mac：",
-            style = MaterialTheme.typography.labelSmall,
-            color = TextTertiary,
-        )
         FileTypeBtn("📄 文件",  Color(0xFF1E3A5F), onPickFiles)
         FileTypeBtn("🖼️ 图片", Color(0xFF1A3D1A), onPickImages)
         FileTypeBtn("🎬 视频", Color(0xFF3D1A1A), onPickVideos)

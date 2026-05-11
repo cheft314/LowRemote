@@ -86,13 +86,15 @@ final class AudioPlayer {
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            // playAndRecord 允许同时录麦和播放
-            try session.setCategory(.playAndRecord,
+            // vphone / 无麦克风设备上 playAndRecord 会失败，先尝试 playback
+            // 如果用户想双向音频再考虑 playAndRecord
+            try session.setCategory(.playback,
                                     mode: .default,
                                     options: [.defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
         } catch {
             NSLog("[AudioPlayer] AVAudioSession 配置失败: \(error)")
+            // 降级：不配置 audio session，engine.start 可能也会失败，但不影响视频
         }
     }
 }

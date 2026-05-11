@@ -93,6 +93,7 @@ final class RemoteSession {
     // MARK: - Video Surface
 
     func setVideoView(_ view: VideoSurfaceView?) {
+        NSLog("[Session] setVideoView called, view=\(view != nil ? "non-nil" : "nil"), state=\(state)")
         decoderLock.lock()
         defer { decoderLock.unlock() }
         videoView = view
@@ -139,8 +140,10 @@ final class RemoteSession {
             await teardown(); return
         }
 
+        NSLog("[Session] TCP 连接成功，发送 FPS:\(fps) 命令")
         tcp.send("FPS:\(fps)")
         macAudioPlayer.start()
+        NSLog("[Session] AudioPlayer.start() 返回")
 
         await MainActor.run {
             state = .connected
@@ -278,6 +281,7 @@ final class RemoteSession {
     // MARK: - TCP 命令处理
 
     private func handleTcpLine(_ line: String) {
+        NSLog("[Session] TCP 收到: \(line)")
         let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if t.hasPrefix("RESOLUTION:") {
